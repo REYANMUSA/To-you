@@ -55,7 +55,6 @@ function connectSheet(){openSheet(modal('Connect with Her',`<p class="muted">Con
 async function createCode(){if(!sb||!s.auth)return toast('Real account required');let {data,error}=await sb.rpc('create_connection_code');if(error)return toast(error.message);document.getElementById('codeBox').innerHTML=`<strong>Your code</strong><div class="big" style="font-size:25px;margin-top:8px">${esc(data)}</div><div class="muted">Give this code to the person you want to connect with.</div>`}
 async function redeemCode(){let code=document.getElementById('connectCode').value.trim().toUpperCase();if(!code)return toast('Enter a code');if(!sb||!s.auth)return toast('Real account required');let {data,error}=await sb.rpc('redeem_connection_code',{p_code:code});if(error)return toast(error.message);closeSheet();await refreshPartner();toast('Connected safely')}
 async function refreshPartner(){
-  if(!sb||!s.auth)return;
   let {data,error}=await sb.rpc('get_my_connection');
 
   if(error||!data||!data.length){
