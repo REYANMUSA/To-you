@@ -1,3 +1,4 @@
-// Add your Supabase public project values here. Never put a service_role key in this file.
-window.TOYOU_SUPABASE_URL='YOUR_SUPABASE_URL';
-window.TOYOU_SUPABASE_ANON_KEY='YOUR_SUPABASE_ANON_KEY';
+// Supabase public client configuration for to you.
+// Never put a service_role key in this file.
+window.TOYOU_SUPABASE_URL='https://xxeuzzgjjdumiltqqekp.supabase.co';
+window.TOYOU_SUPABASE_ANON_KEY='sb_publishable_IBEr5KhQxdDC2hkEHX9kMQ_mbgAoNYg';
