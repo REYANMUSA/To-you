@@ -338,7 +338,7 @@ async function resetDhikr(){
   s.dhikr=0;s.dhikrDate=todayKey();save();render();closeSheet();dhikr();await persistDhikr();
 }
 async function markHadithLearned(hadithId){const err=await cloudUpsert('hadith_progress',{user_id:s.profile.id,hadith_id:hadithId,first_learned_at:new Date().toISOString(),review_count:0,last_reviewed_at:new Date().toISOString(),mastered:true});if(err)return;s.hadithLearned=[...new Set([...s.hadithLearned,hadithId])];save();closeSheet();render();toast('Marked learned')}
-async async function hadith(){
+async function hadith(){
   let h=null;
   if(sb&&s.auth){const day=hadithCourseDay();const r=await sb.from('hadiths').select('*').eq('verified',true).eq('course_day',day).in('collection',['sahih_bukhari','sahih_muslim']).limit(1).maybeSingle();h=r.data}
   h=h||{id:null,collection:'sahih_bukhari',reference:'Sahih al-Bukhari 1',arabic:'إِنَّمَا الْأَعْمَالُ بِالنِّيَّاتِ',transliteration:'Innamal-a‘malu bin-niyyat',english:'The reward of deeds depends upon intentions, and every person will get the reward according to what they intended.',course_day:1};
