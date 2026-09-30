@@ -74,7 +74,28 @@ function startDemo(){s=clone(fresh);Object.assign(s,clone(demoSeed));s.demo=true
 async function googleLogin(){if(!sb)return toast('Add Supabase URL + anon key first');const {error}=await sb.auth.signInWithOAuth({provider:'google',options:{redirectTo:location.origin+location.pathname}});if(error)toast(error.message)}
 async function emailAuth(){let e=document.getElementById('loginEmail').value.trim(),p=document.getElementById('loginPass').value;if(!e||p.length<6)return toast('Use a valid email and 6+ character password');if(!sb)return toast('Add Supabase URL + anon key first');let r=s.signup?await sb.auth.signUp({email:e,password:p}):await sb.auth.signInWithPassword({email:e,password:p});if(r.error)return toast(r.error.message);if(s.signup&&r.data.user&&!r.data.session)return toast('Check your email to confirm your account')}
 async function signOut(){if(sb)await sb.auth.signOut();KEY=BASE_KEY;s=clone(fresh);render()}
-async function initAuth(){if(!sb){render();return}let {data}=await sb.auth.getSession();if(data.session)await hydrateUser(data.session.user);else render();sb.auth.onAuthStateChange(async(_event,session)=>{if(session)await hydrateUser(session.user);else if(!s.demo){s=clone(fresh);render()}})}
+let authQueue=Promise.resolve();
+let lastQueuedUserId='__unset__';
+function queueAuthSession(session){
+  const uid=session?.user?.id||'__signed_out__';
+  if(uid===lastQueuedUserId)return;
+  lastQueuedUserId=uid;
+  authQueue=authQueue.then(async()=>{
+    if(session)await hydrateUser(session.user);
+    else if(!s.demo){
+      KEY=BASE_KEY;
+      s=clone(fresh);
+      render();
+    }
+  }).catch(e=>toast('Session sync error: '+(e?.message||e)));
+}
+function initAuth(){
+  if(!sb){render();return}
+  sb.auth.onAuthStateChange((_event,session)=>{
+    setTimeout(()=>queueAuthSession(session),0);
+  });
+  sb.auth.getSession().then(({data})=>queueAuthSession(data.session)).catch(e=>toast('Could not restore session: '+e.message));
+}
 async function cloudUpsert(table,row){
   if(!sb||!s.auth)return null;
   const r=await sb.from(table).upsert(row);
@@ -178,15 +199,25 @@ function connectSheet(){openSheet(modal('Connect with Her',`<p class="muted">Con
 async function createCode(){if(!sb||!s.auth)return toast('Real account required');let {data,error}=await sb.rpc('create_connection_code');if(error)return toast(error.message);document.getElementById('codeBox').innerHTML=`<strong>Your code</strong><div class="big" style="font-size:25px;margin-top:8px">${esc(data)}</div><div class="muted">Give this code to the person you want to connect with.</div>`}
 async function redeemCode(){let code=document.getElementById('connectCode').value.trim().toUpperCase();if(!code)return toast('Enter a code');if(!sb||!s.auth)return toast('Real account required');let {data,error}=await sb.rpc('redeem_connection_code',{p_code:code});if(error)return toast(error.message);closeSheet();await refreshPartner();await hydrateCoreData();toast('Connected safely')}
 async function refreshPartner(){
-  if(!sb||!s.auth)return;
-  let {data,error}=await sb.rpc('get_my_connection');
-  if(error||!data||!data.length){s.partner=null;s.connected=false}
-  else{
+  if(!sb||!s.auth)return false;
+  const previous=s.partner;
+  const {data,error}=await sb.rpc('get_my_connection');
+  if(error){
+    if(previous?.id&&previous?.coupleId){s.partner=previous;s.connected=true}
+    else s.connected=false;
+    save();render();
+    return !!previous;
+  }
+  if(data&&data.length){
     const p=data[0];
     s.partner={id:p.partner_id,coupleId:p.couple_id,name:p.partner_name||'Her',avatar:p.partner_avatar||'',email:'',provider:''};
     s.connected=true;
+  }else{
+    s.partner=null;
+    s.connected=false;
   }
   save();render();
+  return s.connected;
 }
 async function toggleItem(type,id){let kind=type==='habits'?'habit':'task';let done=!doneOn(kind,id);setDone(kind,id,done);if(sb&&s.auth){const table=kind==='habit'?'habit_completions':'task_completions';const key=kind==='habit'?'habit_id':'task_id';if(done)await cloudUpsert(table,{[key]:id,owner_user_id:s.profile.id,completed_on:todayKey()});else await sb.from(table).delete().eq(key,id).eq('owner_user_id',s.profile.id).eq('completed_on',todayKey())}if(done&&kind==='habit')toast('Habit completed ✓');render()}
 function addHabit(){openSheet(modal('Create habit',`<div class="field"><label>Habit name</label><input id="newHabit" placeholder="e.g. Study for 30 minutes"></div><div class="field"><label>Frequency</label><select id="habitFreq"><option value="daily">Daily</option><option value="weekly">Weekly</option><option value="custom">Selected days</option></select></div><button class="btn" style="width:100%" onclick="createHabit()">Create habit</button>`))}
