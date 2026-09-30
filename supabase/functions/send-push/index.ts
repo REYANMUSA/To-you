@@ -50,7 +50,7 @@ async function sendToUser(userId:string,title:string,body:string,tag:string){
 async function sendDue(){
   const now=new Date();
   const {data:rows,error}=await admin.from("notification_schedules")
-    .select("id,user_id,title,body,notify_at,repeat_daily")
+    .select("id,user_id,title,body,notify_at,repeat_daily,repeat_yearly")
     .eq("enabled",true)
     .lte("notify_at",now.toISOString())
     .order("notify_at",{ascending:true})
@@ -63,6 +63,10 @@ async function sendDue(){
     if(row.repeat_daily){
       const next=new Date(row.notify_at);
       next.setUTCDate(next.getUTCDate()+1);
+      await admin.from("notification_schedules").update({notify_at:next.toISOString(),last_sent_at:now.toISOString(),updated_at:now.toISOString()}).eq("id",row.id);
+    }else if(row.repeat_yearly){
+      const next=new Date(row.notify_at);
+      next.setUTCFullYear(next.getUTCFullYear()+1);
       await admin.from("notification_schedules").update({notify_at:next.toISOString(),last_sent_at:now.toISOString(),updated_at:now.toISOString()}).eq("id",row.id);
     }else{
       await admin.from("notification_schedules").update({enabled:false,last_sent_at:now.toISOString(),updated_at:now.toISOString()}).eq("id",row.id);
