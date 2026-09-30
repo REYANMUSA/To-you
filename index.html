@@ -256,6 +256,9 @@ async function hydrateUser(user){
   s.auth=true;s.demo=false;s.tour=p.tour_completed!==true;
   save();
   startNeedRealtime(user.id);
+  const monthStart=new Date(); monthStart.setUTCDate(1); monthStart.setUTCHours(0,0,0,0);
+  const rr=await sb.from('streak_restores').select('id',{count:'exact',head:true}).eq('user_id',user.id).gte('created_at',monthStart.toISOString());
+  s.streakRestoresUsed=rr.count||0;
   await refreshPartner();
   await hydrateCoreData();
 }
