@@ -522,10 +522,15 @@ function addSharedGoal(){openSheet(modal('Our goal',`<div class="field"><label>G
 async function createSharedGoal(){let n=document.getElementById('sharedGoal').value.trim();if(!n)return;if(!s.connected||!s.partner?.coupleId)return toast('Connect first');let id=crypto.randomUUID(),desc=document.getElementById('sharedDesc').value.trim();s.sharedGoals.push({id,title:n,desc,progress:0,coupleId:s.partner.coupleId});if(sb&&s.auth){let err=await cloudUpsert('shared_goals',{id,couple_id:s.partner.coupleId,title:n,description:desc,progress:0,created_by:s.profile.id});if(err){s.sharedGoals=s.sharedGoals.filter(x=>x.id!==id);return}}save();closeSheet();render();toast('Shared goal created')}
 function courses(){return `<main class="page"><button class="back" onclick="go('us')">‹ Us</button><div class="row"><h1>Courses</h1><button class="btn secondary" onclick="course()">+ Add</button></div>${s.courses.map(c=>`<section class="card"><div class="row"><div><strong>${esc(c.name)}</strong><div class="muted">${c.owner==='me'?'Mine':'Hers'} · ${c.status}</div></div><span>${c.progress}%</span></div><div class="progress" style="margin-top:10px"><i style="width:${c.progress}%"></i></div>${c.progress>=100?'<span class="pill" style="margin-top:10px">Shared achievement unlocked</span>':''}</section>`).join('')}</main>`}
 function deenTogether(){return `<main class="page"><button class="back" onclick="go('us')">‹ Us</button><h1>Deen Together</h1><section class="card" onclick="openQuranTogether()"><div class="row"><div><strong>Qur’an</strong><div class="muted">3-page daily muraaja’ah · meaningful ayahs</div></div><span class="pill">Together</span></div></section><section class="card" onclick="hadithTogether()"><div class="row"><div><strong>365 Hadith</strong><div class="muted">Sahih al-Bukhari & Sahih Muslim · memorize together</div></div><span class="pill">${Math.min(365,(s.hadithCourse||[]).length)}/365</span></div><div class="progress" style="margin-top:12px"><i style="width:${Math.min(100,Math.round((s.hadithLearned||[]).length/365*100))}%"></i></div></section><section class="card"><strong>Dhikr</strong><div class="muted">Intentional shared milestones</div></section><section class="card"><strong>Islamic Learning</strong><div class="muted">Lessons and challenges</div></section></main>`}
-function hadithTogether(){
+async function hadithTogether(){
+  // Always load the full course directly from Supabase so the page cannot stay stuck on the old 2-item local cache.
+  if(sb){
+    const {data,error}=await sb.from('hadiths').select('*').gte('course_day',1).lte('course_day',365).order('course_day',{ascending:true}).limit(365);
+    if(error){toast('Could not load the 365 Hadith course: '+error.message);return}
+    if(data&&data.length){s.hadithCourse=data;save();}
+  }
   const course=(s.hadithCourse||[]).filter(x=>x.course_day>=1&&x.course_day<=365).sort((a,b)=>a.course_day-b.course_day);
-  const learned=new Set(s.hadithLearned||[]);
-  if(!course.length){openSheet(modal('365 Hadith','<div class="empty">The verified 365-day hadith course is not fully loaded yet.</div>'));return}
+  if(course.length<365){toast('Hadith course loaded: '+course.length+'/365');}
   s.screen='hadithTogether';save();render();
 }
 function hadithTogetherPage(){
