@@ -19,7 +19,8 @@ body.dark{--bg:#171a17;--card:#20241f;--text:#f1f3ef;--muted:#aab1a9;--line:#343
 </head>
 <body><div id="splash"><div class="splashMark">t</div></div><div id="app" class="app"></div>
 <script>
-const KEY='toyou_phase5_v1';
+const BASE_KEY='toyou_phase5_v1';
+let KEY=BASE_KEY;
 const SUPABASE_URL=window.TOYOU_SUPABASE_URL||'YOUR_SUPABASE_URL';
 const SUPABASE_ANON_KEY=window.TOYOU_SUPABASE_ANON_KEY||'YOUR_SUPABASE_ANON_KEY';
 const REAL_AUTH=typeof supabase!=='undefined' && !SUPABASE_URL.startsWith('YOUR_') && !SUPABASE_ANON_KEY.startsWith('YOUR_');
@@ -27,7 +28,33 @@ let sb=REAL_AUTH?supabase.createClient(SUPABASE_URL,SUPABASE_ANON_KEY):null;
 const fresh={profile:{id:'',name:'',email:'',avatar:'',provider:'',accent:'#718c73',visualMode:'classic'},partner:null,screen:'home',theme:'light',tour:false,auth:false,demo:false,signup:false,connected:false,connectionCode:'',habits:[],habitCompletions:{},tasks:[],taskCompletions:{},goals:[],sharedGoals:[],dhikr:0,dhikrDate:'',dhikrCounts:{astaghfirullah:0,subhanallah:0,alhamdulillah:0,la_ilaha_illallah:0},prayer:{Fajr:true,Dhuhr:true,Asr:true,Maghrib:true,Isha:true},hadithLearned:[],quran:{goal:'',progress:0},courses:[],journey:[],future:[],notes:[],reflections:[],achievements:[],needSent:false,notifications:[],search:'',settings:{notifications:true,dark:false}};
 const demoSeed={habits:[{id:'h1',name:'Study for 30 minutes',frequency:'Daily'},{id:'h2',name:'Exercise',frequency:'Daily'},{id:'h3',name:'Read',frequency:'Daily'}],tasks:[{id:'t1',title:"Finish today's work",date:todayKey()},{id:'t2',title:'Review notes',date:todayKey()}],goals:[{id:'g1',title:'Become a better version of myself',progress:42,target:'2027-01-01'},{id:'g2',title:'Build something real',progress:25,target:'2026-12-31'}],quran:{goal:'Read 10 pages a day',progress:4},courses:[{id:'c1',owner:'me',name:'Web Development',progress:35,status:'In progress'}],journey:[{id:'j1',date:'2024-01-01',title:'The day we met',type:'past',desc:'A meaningful beginning.',photo:''}],future:[{id:'f1',title:'Education',desc:'Keep building knowledge.'},{id:'f2',title:'Career',desc:'Become capable of creating real things.'}],dhikr:37,hadithLearned:[1],achievements:['demo'],partner:{name:'Demo Her',email:'her@demo.toyou.app',avatar:'',provider:'demo'},connected:true};
 let s=load();
-function clone(x){return JSON.parse(JSON.stringify(x))} function load(){let out;try{out=Object.assign(clone(fresh),JSON.parse(localStorage.getItem(KEY)||'{}'))}catch{out=clone(fresh)}if(out.dhikrDate!==todayKey()){out.dhikr=0;out.dhikrCounts={astaghfirullah:0,subhanallah:0,alhamdulillah:0,la_ilaha_illallah:0};out.dhikrDate=todayKey()}out.dhikrCounts=Object.assign({astaghfirullah:0,subhanallah:0,alhamdulillah:0,la_ilaha_illallah:0},out.dhikrCounts||{});if(!out.dhikrCounts.astaghfirullah&&out.dhikr)out.dhikrCounts.astaghfirullah=out.dhikr;out.dhikr=Object.values(out.dhikrCounts).reduce((a,b)=>a+b,0);return out} function save(){localStorage.setItem(KEY,JSON.stringify(s))}
+function clone(x){return JSON.parse(JSON.stringify(x))}
+function load(){
+  let out;
+  try{out=Object.assign(clone(fresh),JSON.parse(localStorage.getItem(KEY)||'{}'))}catch{out=clone(fresh)}
+  if(out.dhikrDate!==todayKey()){
+    out.dhikr=0;
+    out.dhikrCounts={astaghfirullah:0,subhanallah:0,alhamdulillah:0,la_ilaha_illallah:0};
+    out.dhikrDate=todayKey();
+  }
+  out.dhikrCounts=Object.assign({astaghfirullah:0,subhanallah:0,alhamdulillah:0,la_ilaha_illallah:0},out.dhikrCounts||{});
+  if(!out.dhikrCounts.astaghfirullah&&out.dhikr)out.dhikrCounts.astaghfirullah=out.dhikr;
+  out.dhikr=Object.values(out.dhikrCounts).reduce((a,b)=>a+b,0);
+  return out
+}
+function save(){try{localStorage.setItem(KEY,JSON.stringify(s))}catch{}}
+function switchUserStorage(uid){
+  if(!uid){KEY=BASE_KEY;return load()}
+  const next=BASE_KEY+':'+uid;
+  if(!localStorage.getItem(next)){
+    try{
+      const legacy=JSON.parse(localStorage.getItem(BASE_KEY)||'null');
+      if(legacy?.profile?.id===uid)localStorage.setItem(next,JSON.stringify(legacy));
+    }catch{}
+  }
+  KEY=next;
+  return load();
+}
 function esc(x){return String(x??'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]))}
 function initials(n){return esc((n||'?').split(/\s+/).map(x=>x[0]).join('').slice(0,2).toUpperCase())} function avatar(n,url=''){return url?`<img class="avatar" src="${esc(url)}" alt="">`:`<div class="avatar fallback">${initials(n)}</div>`}
 function toast(t){const x=document.createElement('div');x.className='toast';x.textContent=t;document.body.appendChild(x);setTimeout(()=>x.remove(),1800)}
@@ -40,44 +67,126 @@ function pct(){let all=s.habits.length+s.tasks.length,done=s.habits.filter(x=>do
 function openSheet(html){document.body.insertAdjacentHTML('beforeend',html)} function closeSheet(){document.querySelector('.modal')?.remove()}
 function modal(title,body){return `<div class="modal" onclick="if(event.target===this)closeSheet()"><div class="sheet"><div class="row"><h2 style="margin:0">${title}</h2><button class="icon" onclick="closeSheet()">×</button></div>${body}</div></div>`}
 function profile(){openSheet(modal('Your profile',`<div class="profileRow" style="display:flex;gap:12px;align-items:center;margin:18px 0">${avatar(s.profile.name,s.profile.avatar)}<div><strong>${esc(s.profile.name||'Your profile')}</strong><div class="muted">${esc(s.profile.email)}</div></div></div><div class="field"><label>Name</label><input id="pname" value="${esc(s.profile.name||'')}" placeholder="Your name"></div><div class="field"><label>Profile photo URL <span class="muted">(optional)</span></label><input id="pavatar" value="${esc(s.profile.avatar||'')}" placeholder="https://..."></div><button class="btn" style="width:100%" onclick="saveProfile()">Save profile</button>`))}
-async function saveProfile(){let n=document.getElementById('pname').value.trim();if(!n)return toast('Enter your name');s.profile.name=n;s.profile.avatar=document.getElementById('pavatar').value.trim();save();if(sb&&s.auth){let {error}=await sb.from('profiles').upsert({id:s.profile.id,display_name:n,avatar_url:s.profile.avatar||null,visual_mode:s.profile.visualMode||'classic',updated_at:new Date().toISOString()});if(error)return toast(error.message)}closeSheet();render();toast('Profile saved')}
+async function saveProfile(){let n=document.getElementById('pname').value.trim();if(!n)return toast('Enter your name');s.profile.name=n;s.profile.avatar=document.getElementById('pavatar').value.trim();save();if(sb&&s.auth){let {error}=await sb.from('profiles').upsert({id:s.profile.id,display_name:n,avatar_url:s.profile.avatar||null,visual_mode:s.profile.visualMode||'classic',dark_mode:s.theme==='dark',notifications:!!s.settings.notifications,updated_at:new Date().toISOString()});if(error)return toast(error.message)}closeSheet();render();toast('Profile saved')}
 function authPage(){return `<main class="authPage"><div class="authLogo">to you</div><p class="authTag">Becoming better, one day at a time.</p><section class="authCard"><div class="authSwitch"><button class="${!s.signup?'active':''}" onclick="s.signup=false;render()">Log in</button><button class="${s.signup?'active':''}" onclick="s.signup=true;render()">Create account</button></div><button class="googleBtn" onclick="googleLogin()"><span class="googleMark">G</span> Continue with Google</button><div class="or"><span>or</span></div><div class="field"><label>Email</label><input id="loginEmail" type="email" autocomplete="email" placeholder="you@example.com"></div><div class="field"><label>Password</label><input id="loginPass" type="password" autocomplete="current-password" placeholder="••••••••"></div><button class="btn" style="width:100%" onclick="emailAuth()">${s.signup?'Create account':'Log in'}</button><button class="btn secondary" style="width:100%;margin-top:8px" onclick="startDemo()">Try Demo</button><p class="muted tiny center">Your private data stays private. Demo data is separate from real accounts.</p></section></main>`}
 function login(){s.signup=false;s.auth=false;s.demo=false;save();render()}
 function startDemo(){s=clone(fresh);Object.assign(s,clone(demoSeed));s.demo=true;s.auth=false;s.profile={name:'Demo Me',email:'demo@toyou.app',avatar:'',provider:'demo',accent:'#718c73'};s.tour=true;save();render();toast('Demo mode started')}
 async function googleLogin(){if(!sb)return toast('Add Supabase URL + anon key first');const {error}=await sb.auth.signInWithOAuth({provider:'google',options:{redirectTo:location.origin+location.pathname}});if(error)toast(error.message)}
 async function emailAuth(){let e=document.getElementById('loginEmail').value.trim(),p=document.getElementById('loginPass').value;if(!e||p.length<6)return toast('Use a valid email and 6+ character password');if(!sb)return toast('Add Supabase URL + anon key first');let r=s.signup?await sb.auth.signUp({email:e,password:p}):await sb.auth.signInWithPassword({email:e,password:p});if(r.error)return toast(r.error.message);if(s.signup&&r.data.user&&!r.data.session)return toast('Check your email to confirm your account')}
-async function signOut(){if(sb)await sb.auth.signOut();localStorage.removeItem(KEY);s=clone(fresh);render()}
+async function signOut(){if(sb)await sb.auth.signOut();KEY=BASE_KEY;s=clone(fresh);render()}
 async function initAuth(){if(!sb){render();return}let {data}=await sb.auth.getSession();if(data.session)await hydrateUser(data.session.user);else render();sb.auth.onAuthStateChange(async(_event,session)=>{if(session)await hydrateUser(session.user);else if(!s.demo){s=clone(fresh);render()}})}
-async function cloudUpsert(table,row){if(!sb||!s.auth)return;const r=await sb.from(table).upsert(row);if(r.error)toast(r.error.message);return r.error}
-async function cloudDelete(table,id){if(!sb||!s.auth)return;const r=await sb.from(table).delete().eq('id',id);if(r.error)toast(r.error.message);return r.error}
-async function hydrateCoreData(){if(!sb||!s.auth)return;const uid=s.profile.id;const [h,t,g,j,hc,tc,sg,nr,jm]=await Promise.all([sb.from('habits').select('*').eq('user_id',uid).eq('archived',false),sb.from('tasks').select('*').eq('user_id',uid).eq('archived',false),sb.from('goals').select('*').eq('user_id',uid),sb.from('journey_events').select('*').eq('owner_user_id',uid).order('event_date',{ascending:true}),sb.from('habit_completions').select('habit_id,completed_on').eq('owner_user_id',uid),sb.from('task_completions').select('task_id,completed_on').eq('owner_user_id',uid),sb.from('shared_goals').select('*').order('created_at',{ascending:true}),sb.from('need_you_requests').select('id,sender_id,status,created_at').eq('recipient_id',uid).order('created_at',{ascending:false}).limit(20),sb.from('journey_media').select('journey_event_id,storage_path').eq('owner_user_id',uid)]);if(!h.error)s.habits=(h.data||[]).map(x=>({id:x.id,name:x.name||x.title,frequency:frequencyLabel(x.frequency)}));if(!t.error)s.tasks=(t.data||[]).map(x=>({id:x.id,title:x.title,date:x.due_date||'Today'}));if(!g.error)s.goals=(g.data||[]).map(x=>({id:x.id,title:x.title,progress:x.progress,target:x.target_date||'',desc:x.description||''}));if(!j.error)s.journey=(j.data||[]).map(x=>({id:x.id,title:x.title,date:x.event_date,type:x.time_position,desc:x.description||'',photo:x.photo_url||''}));if(!jm.error&&jm.data?.length){await Promise.all(jm.data.map(async m=>{let signed=await sb.storage.from('journey-media').createSignedUrl(m.storage_path,60*60*24*30);let row=s.journey.find(x=>x.id===m.journey_event_id);if(row&&signed.data?.signedUrl)row.photo=signed.data.signedUrl}))}if(!sg.error)s.sharedGoals=(sg.data||[]).map(x=>({id:x.id,title:x.title,desc:x.description||'',progress:x.progress||0,coupleId:x.couple_id}));if(!nr.error){let old=s.notifications||[];s.notifications=(nr.data||[]).map(x=>({id:x.id,text:'You received an I Need You signal.',date:x.created_at,status:x.status})).concat(old.filter(x=>!x.status));}s.habitCompletions={};(hc.data||[]).forEach(x=>(s.habitCompletions[x.habit_id]??={})[x.completed_on]=true);s.taskCompletions={};(tc.data||[]).forEach(x=>(s.taskCompletions[x.task_id]??={})[x.completed_on]=true);save();render()}
-async function hydrateUser(user){let {data:p,error}=await sb.from('profiles').select('*').eq('id',user.id).maybeSingle();if(error)return toast(error.message);if(!p){let name=user.user_metadata?.full_name||user.email?.split('@')[0]||'New user';let ins=await sb.from('profiles').insert({id:user.id,display_name:name,avatar_url:user.user_metadata?.avatar_url||null});if(ins.error)return toast(ins.error.message);p={id:user.id,display_name:name,avatar_url:user.user_metadata?.avatar_url||null}}s.profile={id:p.id,name:p.display_name||'Your profile',email:user.email||'',avatar:p.avatar_url||'',provider:'google/email',visualMode:p.visual_mode||'classic'};s.auth=true;s.demo=false;s.tour=true;save();render();await hydrateCoreData();await refreshPartner()}
+async function cloudUpsert(table,row){
+  if(!sb||!s.auth)return null;
+  const r=await sb.from(table).upsert(row);
+  if(r.error)toast('Sync error: '+r.error.message);
+  return r.error||null;
+}
+async function cloudDelete(table,id){
+  if(!sb||!s.auth)return null;
+  const r=await sb.from(table).delete().eq('id',id);
+  if(r.error)toast('Sync error: '+r.error.message);
+  return r.error||null;
+}
+async function hydrateCoreData(){
+  if(!sb||!s.auth)return;
+  const uid=s.profile.id;
+  const today=todayKey();
+  const [h,t,g,j,hc,tc,sg,nr,jm,dd,pr]=await Promise.all([
+    sb.from('habits').select('*').eq('user_id',uid).eq('archived',false),
+    sb.from('tasks').select('*').eq('user_id',uid).eq('archived',false),
+    sb.from('goals').select('*').eq('user_id',uid),
+    sb.from('journey_events').select('*').order('event_date',{ascending:true}),
+    sb.from('habit_completions').select('habit_id,completed_on').eq('owner_user_id',uid),
+    sb.from('task_completions').select('task_id,completed_on').eq('owner_user_id',uid),
+    sb.from('shared_goals').select('*').order('created_at',{ascending:true}),
+    sb.from('need_you_requests').select('id,sender_id,status,created_at').eq('recipient_id',uid).order('created_at',{ascending:false}).limit(20),
+    sb.from('journey_media').select('journey_event_id,storage_path').order('created_at',{ascending:false}),
+    sb.from('dhikr_daily').select('*').eq('user_id',uid).eq('dhikr_date',today).maybeSingle(),
+    sb.from('prayer_settings').select('*').eq('user_id',uid).maybeSingle()
+  ]);
+
+  if(h.error)toast('Could not load habits: '+h.error.message);else s.habits=(h.data||[]).map(x=>({id:x.id,name:x.name||x.title,frequency:frequencyLabel(x.frequency)}));
+  if(t.error)toast('Could not load tasks: '+t.error.message);else s.tasks=(t.data||[]).map(x=>({id:x.id,title:x.title,date:x.due_date||'Today'}));
+  if(g.error)toast('Could not load goals: '+g.error.message);else s.goals=(g.data||[]).map(x=>({id:x.id,title:x.title,progress:x.progress,target:x.target_date||'',desc:x.description||''}));
+  if(j.error)toast('Could not load Journey: '+j.error.message);else s.journey=(j.data||[]).map(x=>({id:x.id,title:x.title,date:x.event_date,type:x.time_position,desc:x.description||'',photo:x.photo_url||''}));
+
+  s.habitCompletions={};
+  if(!hc.error)(hc.data||[]).forEach(x=>(s.habitCompletions[x.habit_id]??={})[x.completed_on]=true);else toast('Could not load habit progress: '+hc.error.message);
+  s.taskCompletions={};
+  if(!tc.error)(tc.data||[]).forEach(x=>(s.taskCompletions[x.task_id]??={})[x.completed_on]=true);else toast('Could not load task progress: '+tc.error.message);
+
+  if(sg.error)toast('Could not load shared goals: '+sg.error.message);
+  else s.sharedGoals=(sg.data||[]).map(x=>({id:x.id,title:x.title,desc:x.description||'',progress:x.progress||0,coupleId:x.couple_id}));
+
+  if(!nr.error){
+    const old=s.notifications||[];
+    s.notifications=(nr.data||[]).map(x=>({id:x.id,text:'You received an I Need You signal.',date:x.created_at,status:x.status})).concat(old.filter(x=>!x.status));
+  }else toast('Could not load signals: '+nr.error.message);
+
+  if(!jm.error&&jm.data?.length){
+    await Promise.all(jm.data.map(async m=>{
+      const signed=await sb.storage.from('journey-media').createSignedUrl(m.storage_path,60*60*24*30);
+      const row=s.journey.find(x=>x.id===m.journey_event_id);
+      if(row&&signed.data?.signedUrl)row.photo=signed.data.signedUrl;
+    }));
+  }else if(jm.error)toast('Could not load Journey photos: '+jm.error.message);
+
+  if(!dd.error&&dd.data){
+    s.dhikrCounts={
+      astaghfirullah:dd.data.astaghfirullah||0,
+      subhanallah:dd.data.subhanallah||0,
+      alhamdulillah:dd.data.alhamdulillah||0,
+      la_ilaha_illallah:dd.data.la_ilaha_illallah||0
+    };
+    s.dhikr=Object.values(s.dhikrCounts).reduce((a,b)=>a+b,0);
+    s.dhikrDate=today;
+  }else if(dd.error)toast('Could not load Dhikr: '+dd.error.message);
+
+  if(!pr.error&&pr.data){
+    s.prayer={
+      Fajr:!!pr.data.fajr_enabled,
+      Dhuhr:!!pr.data.dhuhr_enabled,
+      Asr:!!pr.data.asr_enabled,
+      Maghrib:!!pr.data.maghrib_enabled,
+      Isha:!!pr.data.isha_enabled
+    };
+  }else if(pr.error)toast('Could not load prayer reminders: '+pr.error.message);
+
+  save();render();
+}
+async function hydrateUser(user){
+  switchUserStorage(user.id);
+  let {data:p,error}=await sb.from('profiles').select('*').eq('id',user.id).maybeSingle();
+  if(error)return toast(error.message);
+  if(!p){
+    let name=user.user_metadata?.full_name||user.email?.split('@')[0]||'New user';
+    let ins=await sb.from('profiles').insert({id:user.id,display_name:name,avatar_url:user.user_metadata?.avatar_url||null});
+    if(ins.error)return toast(ins.error.message);
+    p={id:user.id,display_name:name,avatar_url:user.user_metadata?.avatar_url||null,visual_mode:'classic',dark_mode:false,notifications:true,tour_completed:false};
+  }
+  s.profile={
+    id:p.id,name:p.display_name||'Your profile',email:user.email||'',avatar:p.avatar_url||'',provider:'google/email',visualMode:p.visual_mode||'classic'
+  };
+  s.theme=p.dark_mode?'dark':'light';
+  s.settings.notifications=p.notifications!==false;
+  s.auth=true;s.demo=false;s.tour=p.tour_completed!==true;
+  save();render();
+  await refreshPartner();
+  await hydrateCoreData();
+}
 function connectSheet(){openSheet(modal('Connect with Her',`<p class="muted">Connect only when both of you intentionally choose to. Private data stays private.</p><div class="field"><label>Her connection code</label><input id="connectCode" placeholder="TOYOU-7K4P-92" autocapitalize="characters"></div><button class="btn" style="width:100%" onclick="redeemCode()">Connect</button><div class="or"><span>or</span></div><button class="btn secondary" style="width:100%" onclick="createCode()">Create my code</button><div id="codeBox" class="empty"></div>`))}
 async function createCode(){if(!sb||!s.auth)return toast('Real account required');let {data,error}=await sb.rpc('create_connection_code');if(error)return toast(error.message);document.getElementById('codeBox').innerHTML=`<strong>Your code</strong><div class="big" style="font-size:25px;margin-top:8px">${esc(data)}</div><div class="muted">Give this code to the person you want to connect with.</div>`}
-async function redeemCode(){let code=document.getElementById('connectCode').value.trim().toUpperCase();if(!code)return toast('Enter a code');if(!sb||!s.auth)return toast('Real account required');let {data,error}=await sb.rpc('redeem_connection_code',{p_code:code});if(error)return toast(error.message);closeSheet();await refreshPartner();toast('Connected safely')}
+async function redeemCode(){let code=document.getElementById('connectCode').value.trim().toUpperCase();if(!code)return toast('Enter a code');if(!sb||!s.auth)return toast('Real account required');let {data,error}=await sb.rpc('redeem_connection_code',{p_code:code});if(error)return toast(error.message);closeSheet();await refreshPartner();await hydrateCoreData();toast('Connected safely')}
 async function refreshPartner(){
   if(!sb||!s.auth)return;
   let {data,error}=await sb.rpc('get_my_connection');
-
-  if(error||!data||!data.length){
-    s.partner=null;
-    s.connected=false;
-  }else{
-    let p=data[0];
-    s.partner={
-      id:p.partner_id,
-      coupleId:p.couple_id,
-      name:p.partner_name||'Her',
-      avatar:p.partner_avatar||'',
-      email:'',
-      provider:''
-    };
+  if(error||!data||!data.length){s.partner=null;s.connected=false}
+  else{
+    const p=data[0];
+    s.partner={id:p.partner_id,coupleId:p.couple_id,name:p.partner_name||'Her',avatar:p.partner_avatar||'',email:'',provider:''};
     s.connected=true;
   }
-
-  save();
-  render();
-
+  save();render();
 }
 async function toggleItem(type,id){let kind=type==='habits'?'habit':'task';let done=!doneOn(kind,id);setDone(kind,id,done);if(sb&&s.auth){const table=kind==='habit'?'habit_completions':'task_completions';const key=kind==='habit'?'habit_id':'task_id';if(done)await cloudUpsert(table,{[key]:id,owner_user_id:s.profile.id,completed_on:todayKey()});else await sb.from(table).delete().eq(key,id).eq('owner_user_id',s.profile.id).eq('completed_on',todayKey())}if(done&&kind==='habit')toast('Habit completed ✓');render()}
 function addHabit(){openSheet(modal('Create habit',`<div class="field"><label>Habit name</label><input id="newHabit" placeholder="e.g. Study for 30 minutes"></div><div class="field"><label>Frequency</label><select id="habitFreq"><option value="daily">Daily</option><option value="weekly">Weekly</option><option value="custom">Selected days</option></select></div><button class="btn" style="width:100%" onclick="createHabit()">Create habit</button>`))}
@@ -87,10 +196,42 @@ async function createTask(){let n=document.getElementById('newTask').value.trim(
 function addGoal(){openSheet(modal('Create goal',`<div class="field"><label>Goal</label><input id="newGoal" placeholder="What are you building toward?"><div class="grid3" style="margin-top:8px"><button class="btn ghost" type="button" onclick="newGoal.value='Build a skill'">Build a skill</button><button class="btn ghost" type="button" onclick="newGoal.value='Improve my Deen'">Improve my Deen</button><button class="btn ghost" type="button" onclick="newGoal.value='Build something real'">Build something real</button></div></div><div class="field"><label>Description</label><textarea id="goalDesc" placeholder="Why does this matter?"></textarea></div><div class="field"><label>Target date</label><input id="goalDate" type="date"></div><button class="btn" style="width:100%" onclick="createGoal()">Create goal</button>`))}
 async function createGoal(){let n=document.getElementById('newGoal').value.trim();if(!n)return;let id=crypto.randomUUID(),target=document.getElementById('goalDate').value||'',desc=document.getElementById('goalDesc').value.trim();s.goals.push({id,title:n,progress:0,target,desc});if(sb&&s.auth)await cloudUpsert('goals',{id,user_id:s.profile.id,owner_user_id:s.profile.id,title:n,description:desc,progress:0,target_date:target||null});save();closeSheet();render();toast('Goal created')}
 function editGoal(id){let g=s.goals.find(x=>x.id===id);if(!g)return;openSheet(modal('Update goal',`<div class="field"><label>Progress: <span id="gpv">${g.progress}</span>%</label><input id="gprogress" type="range" min="0" max="100" value="${g.progress}" oninput="gpv.textContent=this.value"></div><button class="btn" style="width:100%" onclick="g.progress=+gprogress.value;if(sb&&s.auth)cloudUpsert('goals',{id:g.id,user_id:s.profile.id,owner_user_id:s.profile.id,title:g.title,description:g.desc||'',progress:g.progress,target_date:g.target||null});save();closeSheet();render()">Save progress</button><button class="btn danger" style="width:100%;margin-top:8px" onclick="if(confirm('Delete this goal?')){s.goals=s.goals.filter(x=>x.id!=='${id}');if(sb&&s.auth)cloudDelete('goals','${id}');save();closeSheet();render();toast('Goal deleted')}">Delete goal</button>`))}
-function prayer(){openSheet(modal('Prayer reminders',`<p class="muted">Reminders only — prayers are not task checkboxes.</p><div class="stack">${Object.keys(s.prayer).map(k=>`<div class="item row"><div><strong>${k}</strong><div class="muted">Reminder ${s.prayer[k]?'on':'off'}</div></div><button class="toggle ${s.prayer[k]?'on':''}" onclick="s.prayer['${k}']=!s.prayer['${k}'];save();render();closeSheet();prayer()"><i></i></button></div>`).join('')}</div>`))}
+async function setPrayer(key){
+  s.prayer[key]=!s.prayer[key];save();render();closeSheet();prayer();
+  await cloudUpsert('prayer_settings',{
+    user_id:s.profile.id,
+    reminders_enabled:Object.values(s.prayer).some(Boolean),
+    fajr_enabled:!!s.prayer.Fajr,
+    dhuhr_enabled:!!s.prayer.Dhuhr,
+    asr_enabled:!!s.prayer.Asr,
+    maghrib_enabled:!!s.prayer.Maghrib,
+    isha_enabled:!!s.prayer.Isha
+  });
+}
+function prayer(){openSheet(modal('Prayer reminders',`<p class="muted">Reminders only — prayers are not task checkboxes.</p><div class="stack">${Object.keys(s.prayer).map(k=>`<div class="item row"><div><strong>${k}</strong><div class="muted">Reminder ${s.prayer[k]?'on':'off'}</div></div><button class="toggle ${s.prayer[k]?'on':''}" onclick="setPrayer('${k}')"><i></i></button></div>`).join('')}</div>`))}
 function dhikr(){var items=[['astaghfirullah','أَسْتَغْفِرُ اللَّهَ','Astaghfirullah'],['subhanallah','سُبْحَانَ اللَّهِ','Subhanallah'],['alhamdulillah','الْحَمْدُ لِلَّهِ','Alhamdulillah'],['la_ilaha_illallah','لَا إِلَٰهَ إِلَّا اللَّهُ','La ilaha illallah']];var cards=items.map(function(x){var n=s.dhikrCounts[x[0]]||0;return '<button class="dhikrBtn" onclick="addDhikr(\''+x[0]+'\')"><div class="dhikrArabic">'+x[1]+'</div><div class="dhikrName">'+x[2]+'</div><div class="dhikrCount">'+n+'/100</div><div class="dhikrProgress"><i style="width:'+n+'%"></i></div></button>'}).join('');openSheet(modal('Dhikr','<div class="dhikrHub"><div class="dhikrHero"><div><div class="muted">Today</div><div class="dhikrTotal">'+s.dhikr+'/400</div></div><span class="pill">4 adhkar</span></div><div class="dhikrGrid">'+cards+'</div><button class="btn ghost" style="width:100%;margin-top:12px" onclick="resetDhikr()">Reset today</button></div>'))}
-function addDhikr(id){s.dhikrCounts[id]=Math.min(100,(s.dhikrCounts[id]||0)+1);s.dhikr=Object.values(s.dhikrCounts).reduce(function(a,b){return a+b},0);save();render();closeSheet();dhikr()}
-function resetDhikr(){s.dhikrCounts={astaghfirullah:0,subhanallah:0,alhamdulillah:0,la_ilaha_illallah:0};s.dhikr=0;save();render();closeSheet();dhikr()}
+async function persistDhikr(){
+  if(!sb||!s.auth)return;
+  await cloudUpsert('dhikr_daily',{
+    user_id:s.profile.id,
+    dhikr_date:s.dhikrDate||todayKey(),
+    count:s.dhikr,
+    astaghfirullah:s.dhikrCounts.astaghfirullah||0,
+    subhanallah:s.dhikrCounts.subhanallah||0,
+    alhamdulillah:s.dhikrCounts.alhamdulillah||0,
+    la_ilaha_illallah:s.dhikrCounts.la_ilaha_illallah||0,
+    updated_at:new Date().toISOString()
+  });
+}
+async function addDhikr(id){
+  s.dhikrCounts[id]=Math.min(100,(s.dhikrCounts[id]||0)+1);
+  s.dhikr=Object.values(s.dhikrCounts).reduce(function(a,b){return a+b},0);
+  s.dhikrDate=todayKey();save();render();closeSheet();dhikr();await persistDhikr();
+}
+async function resetDhikr(){
+  s.dhikrCounts={astaghfirullah:0,subhanallah:0,alhamdulillah:0,la_ilaha_illallah:0};
+  s.dhikr=0;s.dhikrDate=todayKey();save();render();closeSheet();dhikr();await persistDhikr();
+}
 function hadith(){openSheet(modal('Today’s Hadith',`<span class="pill">Day 1 · Sahih al-Bukhari</span><h2>إِنَّمَا الأَعْمَالُ بِالنِّيَّاتِ</h2><p><em>Innamal-a‘mālu bin-niyyāt</em></p><p>“Actions are judged by intentions.”</p><p class="muted">Reference: Sahih al-Bukhari 1. Production version must use the verified Bukhari/Muslim library only.</p><div class="grid2"><button class="btn secondary" onclick="toast('Practice mode')">Practice</button><button class="btn" onclick="s.hadithLearned=[...new Set([...s.hadithLearned,1])];save();closeSheet();render();toast('Marked learned')">Mark learned</button></div>`))}
 function challenge(){openSheet(modal('Deen Challenge',`<span class="pill">Scenario · Based on learned material</span><h3>A person gives charity sincerely for Allah, while another does it only so people praise him. What is the key difference?</h3><div class="stack">${['The amount of charity','The intention behind the action','Who received the charity','When it was given'].map((x,i)=>`<button class="listBtn" onclick="challengeAnswer(${i})">${String.fromCharCode(65+i)}. ${x}</button>`).join('')}</div>`))}
 function challengeAnswer(i){closeSheet();openSheet(modal('Answer',`<div class="pill">${i===1?'Correct ✓':'Review this one'}</div><p>The key principle is the intention behind an action. This challenge is based on the hadith about intentions.</p><p class="muted">Source: Sahih al-Bukhari 1.</p><button class="btn" style="width:100%" onclick="closeSheet()">Continue</button>`))}
@@ -98,7 +239,32 @@ function course(){openSheet(modal('Add course',`<div class="field"><label>Course
 function journey(){go('journey')}
 let journeyPhotoData='';
 async function journeyPhoto(input){const file=input.files&&input.files[0];if(!file)return;try{const bmp=await createImageBitmap(file);const max=1400,scale=Math.min(1,max/bmp.width,max/bmp.height);const c=document.createElement('canvas');c.width=Math.max(1,Math.round(bmp.width*scale));c.height=Math.max(1,Math.round(bmp.height*scale));c.getContext('2d').drawImage(bmp,0,0,c.width,c.height);journeyPhotoData=c.toDataURL('image/jpeg',.78);const p=document.getElementById('journeyPreview');if(p){p.src=journeyPhotoData;p.classList.remove('hidden')}}catch(e){toast('Could not read that photo')}}
-async function addJourneyEvent(){let t=document.getElementById('jTitle').value.trim();if(!t)return toast('Add a title');let id=crypto.randomUUID(),date=document.getElementById('jDate').value||todayKey(),type=document.getElementById('jType').value,desc=document.getElementById('jDesc').value.trim(),photo=journeyPhotoData||'';s.journey.push({id,title:t,date,type,desc,photo});if(sb&&s.auth){let saved=await cloudUpsert('journey_events',{id,owner_user_id:s.profile.id,created_by:s.profile.id,title:t,event_date:date,time_position:type,description:desc,photo_url:null});if(saved){s.journey=s.journey.filter(x=>x.id!==id);return}if(journeyPhotoData){try{const path=s.profile.id+'/'+id+'.jpg';const blob=await (await fetch(journeyPhotoData)).blob();const up=await sb.storage.from('journey-media').upload(path,blob,{contentType:'image/jpeg',upsert:true});if(!up.error){await cloudUpsert('journey_media',{journey_event_id:id,owner_user_id:s.profile.id,storage_path:path});const signed=await sb.storage.from('journey-media').createSignedUrl(path,60*60*24*30);if(signed.data?.signedUrl){s.journey[s.journey.length-1].photo=signed.data.signedUrl;await cloudUpsert('journey_events',{id,owner_user_id:s.profile.id,created_by:s.profile.id,title:t,event_date:date,time_position:type,description:desc,photo_url:signed.data.signedUrl})}}}catch(e){toast('Photo saved locally; upload failed')}}}journeyPhotoData='';save();closeSheet();render();toast('Journey updated')}
+async function addJourneyEvent(){
+  const t=document.getElementById('jTitle').value.trim();if(!t)return toast('Add a title');
+  const id=crypto.randomUUID(),date=document.getElementById('jDate').value||todayKey(),type=document.getElementById('jType').value,desc=document.getElementById('jDesc').value.trim(),photoData=journeyPhotoData||'';
+  const coupleId=s.connected&&s.partner?.coupleId?s.partner.coupleId:null;
+  s.journey.push({id,title:t,date,type,desc,photo:photoData});
+  if(sb&&s.auth){
+    const err=await cloudUpsert('journey_events',{id,owner_user_id:s.profile.id,created_by:s.profile.id,couple_id:coupleId,title:t,event_date:date,time_position:type,description:desc,photo_url:null});
+    if(err){journeyPhotoData='';save();closeSheet();render();return}
+    if(photoData){
+      try{
+        const path=(coupleId||s.profile.id)+'/'+id+'.jpg';
+        const blob=await (await fetch(photoData)).blob();
+        const up=await sb.storage.from('journey-media').upload(path,blob,{contentType:'image/jpeg',upsert:true});
+        if(up.error)toast('Event saved, but photo upload failed');
+        else{
+          const mediaErr=await cloudUpsert('journey_media',{journey_event_id:id,owner_user_id:s.profile.id,storage_path:path});
+          if(!mediaErr){
+            const signed=await sb.storage.from('journey-media').createSignedUrl(path,60*60*24*30);
+            if(signed.data?.signedUrl)s.journey[s.journey.length-1].photo=signed.data.signedUrl;
+          }
+        }
+      }catch(e){toast('Event saved, but photo upload failed')}
+    }
+  }
+  journeyPhotoData='';save();closeSheet();render();toast('Journey updated')
+}
 function addJourney(){journeyPhotoData='';openSheet(modal('Add journey event',`<div class="field"><label>What happened?</label><input id="jTitle" placeholder="A meaningful milestone"></div><div class="field"><label>Date</label><input id="jDate" type="date" value="${todayKey()}"></div><div class="field"><label>Time position</label><select id="jType"><option value="past">Past</option><option value="present">Present</option><option value="future">Future</option></select></div><div class="field"><label>Description</label><textarea id="jDesc" placeholder="What do you want to remember?"></textarea></div><div class="field"><label>Photo <span class="muted">(optional)</span></label><input type="file" accept="image/*" onchange="journeyPhoto(this)"><img id="journeyPreview" class="photoPreview hidden" alt="Photo preview"></div><button class="btn" style="width:100%" onclick="addJourneyEvent()">Add event</button>`))}
 async function need(){if(!s.connected||!s.partner?.id||!s.partner?.coupleId)return toast('Connect first');let id=crypto.randomUUID();s.needSent=true;if(sb&&s.auth){let err=await cloudUpsert('need_you_requests',{id,couple_id:s.partner.coupleId,sender_id:s.profile.id,recipient_id:s.partner.id,status:'sent'});if(err){s.needSent=false;return}}s.notifications.unshift({id,text:`${s.profile.name} needs you`,date:new Date().toISOString(),status:'sent'});save();render();toast('I Need You signal sent')}
 function addNote(){openSheet(modal('New note',`<div class="field"><label>Title</label><input id="noteTitle"></div><div class="field"><label>Note</label><textarea id="noteBody"></textarea></div><button class="btn" style="width:100%" onclick="let t=noteTitle.value.trim();if(t){s.notes.unshift({id:crypto.randomUUID(),title:t,body:noteBody.value,date:new Date().toISOString()});save();closeSheet();render();toast('Note saved')}">Save note</button>`))}
@@ -122,13 +288,25 @@ function future(){return `<main class="page"><button class="back" onclick="go('u
 function journeyPage(){return `<main class="page"><button class="back" onclick="go('us')">‹ Us</button><div class="row"><h1>Our Journey</h1><button class="btn secondary" onclick="addJourney()">+ Add</button></div><div class="pill">Past · Present · Future</div>${s.journey.sort((a,b)=>a.date.localeCompare(b.date)).map(j=>`<section class="card"><div class="row"><span class="pill">${esc(j.type)}</span><span class="muted">${esc(j.date)}</span></div><h3>${esc(j.title)}</h3><div class="muted">${esc(j.desc)}</div>${j.photo?`<img class="journeyPhoto" src="${esc(j.photo)}" alt="Journey photo">`:''}</section>`).join('')}</main>`}
 function notes(){return `<main class="page"><div class="row"><h1>Notes</h1><button class="btn secondary" onclick="addNote()">+ New</button></div>${s.notes.length?s.notes.map(n=>`<section class="card"><strong>${esc(n.title)}</strong><p class="muted">${esc(n.body)}</p></section>`).join(''):'<div class="empty">Private notes live here.</div>'}</main>`}
 function searchPage(){let q=s.search.toLowerCase();let all=[...s.habits.map(x=>({t:x.name,c:'Habit'})),...s.tasks.map(x=>({t:x.title,c:'Task'})),...s.goals.map(x=>({t:x.title,c:'Goal'})),...s.courses.map(x=>({t:x.name,c:'Course'})),...s.journey.map(x=>({t:x.title,c:'Journey'})),...s.notes.map(x=>({t:x.title,c:'Note'}))];let r=all.filter(x=>!q||x.t.toLowerCase().includes(q));return `<main class="page"><h1>Search</h1><div class="field"><input id="searchInput" value="${esc(s.search)}" oninput="search()" placeholder="Search habits, tasks, goals, courses, journey..."></div>${r.map(x=>`<div class="item" style="margin:8px 0"><strong>${esc(x.t)}</strong><div class="muted">${x.c}</div></div>`).join('')||'<div class="empty">Nothing found.</div>'}</main>`}
-function settings(){return `<main class="page"><h1>Settings</h1><section class="card"><div style="display:flex;align-items:center;gap:12px">${avatar(s.profile.name,s.profile.avatar)}<div><strong>${esc(s.profile.name||'Your profile')}</strong><div class="muted">${esc(s.profile.email||'')}</div></div></div><button class="btn secondary" style="width:100%;margin-top:12px" onclick="profile()">Edit profile</button><button class="btn ghost" style="width:100%;margin-top:8px" onclick="signOut()">Sign out</button></section><section class="card"><strong>Appearance</strong><div class="row" style="margin-top:12px"><span>Use dark appearance</span><button class="toggle ${s.theme==='dark'?'on':''}" onclick="s.theme=s.theme==='dark'?'light':'dark';save();render()"><i></i></button></div><div class="field" style="margin-top:14px"><label>Personal style</label><select onchange="s.profile.visualMode=this.value;save();render()"><option value="classic" ${s.profile.visualMode!=='girl'?'selected':''}>Classic — your current look</option><option value="girl" ${s.profile.visualMode==='girl'?'selected':''}>Soft rose — her style</option></select></div></section><section class="card"><strong>Notifications</strong><div class="row" style="margin-top:12px"><span>Allow reminders</span><button class="toggle ${s.settings.notifications?'on':''}" onclick="s.settings.notifications=!s.settings.notifications;save();render()"><i></i></button></div></section><section class="card"><strong>Connection</strong><div class="muted">${s.connected&&s.partner?'Connected with '+esc(s.partner.name):'No partner connected yet.'}</div><button class="btn secondary" style="margin-top:10px" onclick="connectSheet()">${s.connected?'Manage connection':'Connect with Her'}</button></section><section class="card"><strong>Privacy & Data</strong><div class="stack" style="margin-top:12px"><button class="btn secondary" onclick="exportData()">Export My Data</button>${s.demo?'<button class="btn danger" onclick="startDemo()">Reset Demo Data</button>':''}</div></section><section class="card"><strong>Help</strong><div class="muted">Replay the guided tour and learn every area of to you.</div><button class="btn ghost" style="margin-top:10px" onclick="s.tour=false;save();render()">Replay tour</button></section></main>`}
+async function persistPreferences(){
+  if(!sb||!s.auth)return;
+  const {error}=await sb.from('profiles').update({
+    visual_mode:s.profile.visualMode||'classic',
+    dark_mode:s.theme==='dark',
+    notifications:!!s.settings.notifications,
+    updated_at:new Date().toISOString()
+  }).eq('id',s.profile.id);
+  if(error)toast('Settings could not sync: '+error.message);
+}
+async function setThemeMode(){s.theme=s.theme==='dark'?'light':'dark';save();render();await persistPreferences()}
+async function setVisualMode(mode){s.profile.visualMode=mode==='girl'?'girl':'classic';save();render();await persistPreferences()}
+async function setNotifications(){s.settings.notifications=!s.settings.notifications;save();render();await persistPreferences()}
+function settings(){return `<main class="page"><h1>Settings</h1><section class="card"><div style="display:flex;align-items:center;gap:12px">${avatar(s.profile.name,s.profile.avatar)}<div><strong>${esc(s.profile.name||'Your profile')}</strong><div class="muted">${esc(s.profile.email||'')}</div></div></div><button class="btn secondary" style="width:100%;margin-top:12px" onclick="profile()">Edit profile</button><button class="btn ghost" style="width:100%;margin-top:8px" onclick="signOut()">Sign out</button></section><section class="card"><strong>Appearance</strong><div class="row" style="margin-top:12px"><span>Use dark appearance</span><button class="toggle ${s.theme==='dark'?'on':''}" onclick="setThemeMode()"><i></i></button></div><div class="field" style="margin-top:14px"><label>Personal style</label><select onchange="setVisualMode(this.value)"><option value="classic" ${s.profile.visualMode!=='girl'?'selected':''}>Classic — your current look</option><option value="girl" ${s.profile.visualMode==='girl'?'selected':''}>Soft rose — her style</option></select></div></section><section class="card"><strong>Notifications</strong><div class="row" style="margin-top:12px"><span>Allow reminders</span><button class="toggle ${s.settings.notifications?'on':''}" onclick="setNotifications()"><i></i></button></div></section><section class="card"><strong>Connection</strong><div class="muted">${s.connected&&s.partner?'Connected with '+esc(s.partner.name):'No partner connected yet.'}</div><button class="btn secondary" style="margin-top:10px" onclick="connectSheet()">${s.connected?'Manage connection':'Connect with Her'}</button></section><section class="card"><strong>Privacy & Data</strong><div class="stack" style="margin-top:12px"><button class="btn secondary" onclick="exportData()">Export My Data</button>${s.demo?'<button class="btn danger" onclick="startDemo()">Reset Demo Data</button>':''}</div></section><section class="card"><strong>Help</strong><div class="muted">Replay the guided tour and learn every area of to you.</div><button class="btn ghost" style="margin-top:10px" onclick="s.tour=false;save();render()">Replay tour</button></section></main>`}
 function nav(){return `<nav class="nav">${[['home','⌂','Home'],['progress','◔','Progress'],['deen','☪','Deen'],['us','♡','Us']].map(([id,i,l])=>`<button class="${s.screen===id?'active':''}" onclick="go('${id}')"><div>${i}</div>${l}</button>`).join('')}</nav>`}
 function render(){document.body.classList.toggle('dark',s.theme==='dark');document.body.classList.toggle('girl-theme',s.profile.visualMode==='girl');document.getElementById('app').innerHTML=(!s.auth&&!s.demo)?authPage():(!s.tour?onboarding():header()+page()+nav())}
 function page(){switch(s.screen){case'progress':return progress();case'deen':return deen();case'us':return us();case'grow':return grow();case'ourg':return ourg();case'courses':return courses();case'deenTogether':return deenTogether();case'future':return future();case'journey':return journeyPage();case'notes':return notes();case'search':return searchPage();case'settings':return settings();default:return home()}}
 render();
 setTimeout(function(){var x=document.getElementById('splash');if(x)x.classList.add('hide')},650);
 initAuth();
-if(sb) refreshPartner();
 if('serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js').catch(()=>{});
 </script></body></html>
