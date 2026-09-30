@@ -144,12 +144,19 @@ function startQuranLiveSync(coupleId){
   if(!sb||!s.auth||!coupleId||!s.partner?.id)return;
 
   const applyRows=(rows,notifyPartner=false)=>{
-    const next=rows||[];
-    const partnerRows=next.filter(x=>x.user_id===s.partner?.id);
+    const incoming=rows||[];
+    const next=[...(s.quranUsProgress||[])];
+    // Merge server rows into the current state. A temporary empty/partial Realtime
+    // response must never erase a completion that is already known locally.
+    incoming.forEach(row=>{
+      const i=next.findIndex(x=>x.user_id===row.user_id&&x.quran_date===row.quran_date);
+      if(i>=0)next[i]=row;else next.push(row);
+    });
+    const partnerRows=next.filter(x=>x.user_id===s.partner?.id&&x.quran_date===todayKey());
     const key=JSON.stringify(partnerRows.map(x=>[x.user_id,x.pages_completed,x.updated_at]));
     const changed=quranLastPartnerProgressKey!==''&&key!==quranLastPartnerProgressKey;
     quranLastPartnerProgressKey=key;
-    s.quranUsProgress=next;
+    s.quranUsProgress=next.filter(x=>x.quran_date===todayKey());
     if(notifyPartner&&changed){
       const p=partnerRows[0];
       s.notifications.unshift({id:'quran-'+Date.now(),text:(s.partner?.name||'Her')+' updated Qur’an muraaja’ah.',date:new Date().toISOString(),status:'received'});
@@ -178,7 +185,6 @@ function startQuranLiveSync(coupleId){
     const partnerRows=rows.filter(x=>x.user_id===s.partner?.id);
     const key=JSON.stringify(partnerRows.map(x=>[x.user_id,x.pages_completed,x.updated_at]));
     const changed=quranLastPartnerProgressKey!==''&&key!==quranLastPartnerProgressKey;
-    quranLastPartnerProgressKey=key;
     applyRows(rows,changed);
   };
   poll();
