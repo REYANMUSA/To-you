@@ -301,7 +301,7 @@ async function hydrateCoreData(){
   save();render();
 }
 async function hydrateUser(user){
-  switchUserStorage(user.id);
+  s=switchUserStorage(user.id);
   let {data:p,error}=await sb.from('profiles').select('*').eq('id',user.id).maybeSingle();
   if(error)return toast(error.message);
   if(!p){
@@ -322,6 +322,8 @@ async function hydrateUser(user){
   const rr=await sb.from('streak_restores').select('id',{count:'exact',head:true}).eq('user_id',user.id).gte('created_at',monthStart.toISOString());
   s.streakRestoresUsed=rr.count||0;
   await refreshPartner();
+  // Load shared Qur’an data from Supabase before core hydration can save stale local state.
+  await hydrateQuranUs();
   startQuranLiveSync(s.partner?.coupleId);
   await hydrateCoreData();
 }
