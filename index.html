@@ -515,11 +515,21 @@ async function ensureQuranDaily(){
 async function toggleQuranMuraajaah(){
   if(!sb||!s.auth)return toast('Sign in to use shared Qur’an');if(!s.connected||!s.partner?.coupleId)return toast('Connect first');
   if(!await ensureQuranDaily())return;
-  const date=todayKey(),existing=s.quranUsProgress.find(x=>x.user_id===s.profile.id&&x.quran_date===date),done=existing?.pages_completed===3;
-  const row={couple_id:s.partner.coupleId,quran_date:date,user_id:s.profile.id,pages_completed:done?0:3,completed_at:done?null:new Date().toISOString(),updated_at:new Date().toISOString()};
-  const r=await sb.from('quran_muraajaah_progress').upsert(row,{onConflict:'couple_id,quran_date,user_id'});
-  if(r.error){toast('Could not save Qur’an progress: '+r.error.message);return}
-  const rest=s.quranUsProgress.filter(x=>!(x.user_id===s.profile.id&&x.quran_date===date));if(row.pages_completed===3)rest.push(row);s.quranUsProgress=rest;save();render();toast(row.pages_completed===3?'3 pages completed ✓':'Marked incomplete');
+  const date=todayKey(),coupleId=s.partner.coupleId;
+  // Read the authoritative row first so Undo always reflects what is actually saved for this account.
+  const current=await sb.from('quran_muraajaah_progress').select('*').eq('couple_id',coupleId).eq('quran_date',date).eq('user_id',s.profile.id).maybeSingle();
+  if(current.error){toast('Could not read your Qur’an progress: '+current.error.message);return}
+  const done=current.data?.pages_completed===3;
+  const now=new Date().toISOString();
+  const row={couple_id:coupleId,quran_date:date,user_id:s.profile.id,pages_completed:done?0:3,completed_at:done?null:now,updated_at:now};
+  let result;
+  if(current.data){
+    result=await sb.from('quran_muraajaah_progress').update({pages_completed:row.pages_completed,completed_at:row.completed_at,updated_at:row.updated_at}).eq('couple_id',coupleId).eq('quran_date',date).eq('user_id',s.profile.id);
+  }else{
+    result=await sb.from('quran_muraajaah_progress').insert(row);
+  }
+  if(result.error){toast('Could not save Qur’an progress: '+result.error.message);return}
+  const rest=(s.quranUsProgress||[]).filter(x=>!(x.user_id===s.profile.id&&x.quran_date===date));if(row.pages_completed===3)rest.push(row);s.quranUsProgress=rest;save();render();toast(row.pages_completed===3?'3 pages completed ✓':'Marked incomplete');
 }
 function addMeaningfulAyah(){
   if(!sb||!s.auth)return toast('Sign in to use shared Qur’an');if(!s.connected||!s.partner?.coupleId)return toast('Connect first');
