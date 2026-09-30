@@ -412,7 +412,7 @@ async function addDhikr(id){
   s.dhikrCounts[id]=Math.min(100,(s.dhikrCounts[id]||0)+1);
   s.dhikr=Object.values(s.dhikrCounts).reduce(function(a,b){return a+b},0);
   s.dhikrDate=todayKey();
-  if(sb&&s.auth){try{await persistDhikr()}catch(e){s.dhikrCounts=previous;s.dhikr=previousTotal;save();toast('Could not save Dhikr');return}}
+  if(sb&&s.auth){const err=await persistDhikr();if(err){s.dhikrCounts=previous;s.dhikr=previousTotal;save();return}}
   save();render();closeSheet();dhikr();
 }
 async function resetDhikr(){
@@ -423,7 +423,7 @@ async function resetDhikr(){
   if(err){s.dhikrCounts=previous;s.dhikr=previousTotal;save();toast('Could not reset Dhikr');return}
   save();render();closeSheet();dhikr();
 }
-async function markHadithLearned(hadithId){const err=await cloudUpsert('hadith_progress',{user_id:s.profile.id,hadith_id:hadithId,first_learned_at:new Date().toISOString(),review_count:0,last_reviewed_at:new Date().toISOString(),mastered:true});if(err)return;s.hadithLearned=[...new Set([...s.hadithLearned,hadithId])];save();closeSheet();render();toast('Marked learned')}
+async function markHadithLearned(hadithId){if((s.hadithLearned||[]).includes(hadithId))return toast('Already learned');const now=new Date().toISOString();const err=await cloudUpsert('hadith_progress',{user_id:s.profile.id,hadith_id:hadithId,first_learned_at:now,review_count:0,last_reviewed_at:now,mastered:true});if(err)return;s.hadithLearned=[...new Set([...(s.hadithLearned||[]),hadithId])];save();closeSheet();render();toast('Marked learned')});if(err)return;s.hadithLearned=[...new Set([...s.hadithLearned,hadithId])];save();closeSheet();render();toast('Marked learned')}
 async function hadith(){
   let h=null;
   if(sb&&s.auth){const day=hadithCourseDay();const r=await sb.from('hadiths').select('*').eq('verified',true).eq('course_day',day).in('collection',['sahih_bukhari','sahih_muslim']).limit(1).maybeSingle();h=r.data}
@@ -440,9 +440,16 @@ async function challenge(){
   openSheet(modal('Deen Challenge',`<span class="pill">Scenario · Based on learned material</span><h3>${esc(question)}</h3><div class="stack">${options.map((x,i)=>`<button class="listBtn" onclick="challengeAnswer('${id}',${i})">${String.fromCharCode(65+i)}. ${esc(x)}</button>`).join('')}</div>`))
 }
 async function challengeAnswer(id,i){
-  const correct=i===1;
-  if(sb&&s.auth)await cloudUpsert('deen_challenge_attempts',{id:crypto.randomUUID(),user_id:s.profile.id,challenge_id:id,selected_option:String.fromCharCode(65+i),correct});
-  closeSheet();openSheet(modal('Answer',`<div class="pill">${correct?'Correct ✓':'Review this one'}</div><p>The key principle is the intention behind an action.</p><p class="muted">Based on the learned material.</p><button class="btn" style="width:100%" onclick="closeSheet()">Continue</button>`))
+  const selected=String.fromCharCode(65+i);
+  let correct=selected==='B';
+  if(sb&&s.auth){
+    const q=await sb.from('deen_challenges').select('correct_option').eq('id',id).maybeSingle();
+    if(q.error){toast('Could not load the challenge answer: '+q.error.message);return}
+    if(q.data?.correct_option)correct=selected===q.data.correct_option;
+    const err=await cloudUpsert('deen_challenge_attempts',{id:crypto.randomUUID(),user_id:s.profile.id,challenge_id:id,selected_option:selected,correct});
+    if(err)return;
+  }
+  closeSheet();openSheet(modal('Answer',`<div class="pill">${correct?'Correct ✓':'Review this one'}</div><p>${correct?'That answer matches the saved challenge answer.':'Review the learned material and try to remember the principle behind it.'}</p><p class="muted">Based on the learned material.</p><button class="btn" style="width:100%" onclick="closeSheet()">Continue</button>`))
 }
 async function createCourse(){const n=document.getElementById('courseName').value.trim();if(!n)return;const id=crypto.randomUUID(),coupleId=s.connected?s.partner?.coupleId:null,err=await cloudUpsert('courses',{id,user_id:s.profile.id,couple_id:coupleId,title:n,progress:0,status:'In progress'});if(err)return;s.courses.unshift({id,name:n,owner:'me',progress:0,status:'In progress',coupleId});save();closeSheet();render();toast('Course added')}
 function course(){openSheet(modal('Add course',`<div class="field"><label>Course name</label><input id="courseName" placeholder="Web Development"></div><p class="muted">Courses you create are yours. Her courses appear when she adds them.</p><button class="btn" style="width:100%" onclick="createCourse()">Add course</button>`))}
