@@ -347,3 +347,10 @@ using (
     where cm.couple_id = quran_ayah_notes.couple_id and cm.user_id = (select auth.uid())
   )
 );
+
+create index if not exists quran_ayah_notes_couple_created_idx
+  on public.quran_ayah_notes(couple_id, created_at desc);
+create index if not exists quran_ayah_notes_created_by_idx
+  on public.quran_ayah_notes(created_by);
+create index if not exists quran_muraajaah_progress_user_idx
+  on public.quran_muraajaah_progress(user_id);
