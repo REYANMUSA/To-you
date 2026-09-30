@@ -1,10 +1,10 @@
 {
-  "name":"to you",
-  "short_name":"to you",
+  "name":"Amanah",
+  "short_name":"Amanah",
   "start_url":"./",
   "display":"standalone",
   "background_color":"#f7f7f4",
   "theme_color":"#718c73",
-  "description":"to you — Becoming better, one day at a time.",
+  "description":"Amanah — Becoming better, one day at a time.",
   "icons":[{"src":"icon-v2.svg","sizes":"any","type":"image/svg+xml","purpose":"any maskable"}]
 }
