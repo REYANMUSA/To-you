@@ -308,8 +308,19 @@ async function resetDhikr(){
 }
 async function markHadithLearned(hadithId){const err=await cloudUpsert('hadith_progress',{user_id:s.profile.id,hadith_id:hadithId,first_learned_at:new Date().toISOString(),review_count:0,last_reviewed_at:new Date().toISOString(),mastered:true});if(err)return;s.hadithLearned=[...new Set([...s.hadithLearned,hadithId])];save();closeSheet();render();toast('Marked learned')}
 function hadith(){openSheet(modal('Today’s Hadith',`<span class="pill">Day 1 · Sahih al-Bukhari</span><h2>إِنَّمَا الأَعْمَالُ بِالنِّيَّاتِ</h2><p><em>Innamal-a‘mālu bin-niyyāt</em></p><p>“Actions are judged by intentions.”</p><p class="muted">Reference: Sahih al-Bukhari 1.</p><div class="grid2"><button class="btn secondary" onclick="toast('Practice mode')">Practice</button><button class="btn" onclick="markHadithLearned(1)">Mark learned</button></div>`))}
-function challenge(){openSheet(modal('Deen Challenge',`<span class="pill">Scenario · Based on learned material</span><h3>A person gives charity sincerely for Allah, while another does it only so people praise him. What is the key difference?</h3><div class="stack">${['The amount of charity','The intention behind the action','Who received the charity','When it was given'].map((x,i)=>`<button class="listBtn" onclick="challengeAnswer(${i})">${String.fromCharCode(65+i)}. ${x}</button>`).join('')}</div>`))}
-function challengeAnswer(i){closeSheet();openSheet(modal('Answer',`<div class="pill">${i===1?'Correct ✓':'Review this one'}</div><p>The key principle is the intention behind an action. This challenge is based on the hadith about intentions.</p><p class="muted">Source: Sahih al-Bukhari 1.</p><button class="btn" style="width:100%" onclick="closeSheet()">Continue</button>`))}
+async function challenge(){
+  let q=null;
+  if(sb&&s.auth){const r=await sb.from('deen_challenges').select('*').eq('active',true).limit(1).maybeSingle();q=r.data}
+  const question=q?.question||'A person gives charity sincerely for Allah, while another does it only so people praise him. What is the key difference?';
+  const options=q?.options||['The amount of charity','The intention behind the action','Who received the charity','When it was given'];
+  const id=q?.id||'cc848ad9-d21b-4f58-87ba-5269cfb37fe1';
+  openSheet(modal('Deen Challenge',`<span class="pill">Scenario · Based on learned material</span><h3>${esc(question)}</h3><div class="stack">${options.map((x,i)=>`<button class="listBtn" onclick="challengeAnswer('${id}',${i})">${String.fromCharCode(65+i)}. ${esc(x)}</button>`).join('')}</div>`))
+}
+async function challengeAnswer(id,i){
+  const correct=i===1;
+  if(sb&&s.auth)await cloudUpsert('deen_challenge_attempts',{id:crypto.randomUUID(),user_id:s.profile.id,challenge_id:id,selected_option:String.fromCharCode(65+i),correct});
+  closeSheet();openSheet(modal('Answer',`<div class="pill">${correct?'Correct ✓':'Review this one'}</div><p>The key principle is the intention behind an action.</p><p class="muted">Based on the learned material.</p><button class="btn" style="width:100%" onclick="closeSheet()">Continue</button>`))
+}
 async function createCourse(){const n=document.getElementById('courseName').value.trim();if(!n)return;const id=crypto.randomUUID(),coupleId=s.connected?s.partner?.coupleId:null,err=await cloudUpsert('courses',{id,user_id:s.profile.id,couple_id:coupleId,title:n,progress:0,status:'In progress'});if(err)return;s.courses.unshift({id,name:n,owner:'me',progress:0,status:'In progress',coupleId});save();closeSheet();render();toast('Course added')}
 function course(){openSheet(modal('Add course',`<div class="field"><label>Course name</label><input id="courseName" placeholder="Web Development"></div><p class="muted">Courses you create are yours. Her courses appear when she adds them.</p><button class="btn" style="width:100%" onclick="createCourse()">Add course</button>`))}
 function journey(){go('journey')}
