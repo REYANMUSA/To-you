@@ -196,3 +196,154 @@ drop policy if exists journey_media_read on storage.objects;
 create policy journey_media_read on storage.objects for select to authenticated using(bucket_id='journey-media' and (storage.foldername(name))[1]=auth.uid()::text);
 drop policy if exists journey_media_delete on storage.objects;
 create policy journey_media_delete on storage.objects for delete to authenticated using(bucket_id='journey-media' and (storage.foldername(name))[1]=auth.uid()::text);
+
+
+-- Us: shared Qur’an muraaja’ah and meaningful ayahs
+create table if not exists public.quran_muraajaah_daily (
+  id uuid primary key default gen_random_uuid(),
+  couple_id uuid not null references public.couples(id) on delete cascade,
+  quran_date date not null,
+  target_pages integer not null default 3 check (target_pages = 3),
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  unique(couple_id, quran_date)
+);
+
+create table if not exists public.quran_muraajaah_progress (
+  couple_id uuid not null references public.couples(id) on delete cascade,
+  quran_date date not null,
+  user_id uuid not null references auth.users(id) on delete cascade,
+  pages_completed integer not null default 0 check (pages_completed between 0 and 3),
+  completed_at timestamptz,
+  updated_at timestamptz not null default now(),
+  primary key (couple_id, quran_date, user_id)
+);
+
+create table if not exists public.quran_ayah_notes (
+  id uuid primary key default gen_random_uuid(),
+  couple_id uuid not null references public.couples(id) on delete cascade,
+  created_by uuid not null references auth.users(id) on delete cascade,
+  surah text not null,
+  ayah integer not null check (ayah > 0),
+  arabic text not null,
+  translation text not null,
+  note text default '',
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+alter table public.quran_muraajaah_daily enable row level security;
+alter table public.quran_muraajaah_progress enable row level security;
+alter table public.quran_ayah_notes enable row level security;
+
+grant select, insert, update, delete on public.quran_muraajaah_daily to authenticated;
+grant select, insert, update, delete on public.quran_muraajaah_progress to authenticated;
+grant select, insert, update, delete on public.quran_ayah_notes to authenticated;
+
+drop policy if exists quran_muraajaah_daily_member on public.quran_muraajaah_daily;
+create policy quran_muraajaah_daily_member on public.quran_muraajaah_daily
+for all to authenticated
+using (exists (
+  select 1 from public.couple_members cm
+  where cm.couple_id = quran_muraajaah_daily.couple_id and cm.user_id = (select auth.uid())
+))
+with check (exists (
+  select 1 from public.couple_members cm
+  where cm.couple_id = quran_muraajaah_daily.couple_id and cm.user_id = (select auth.uid())
+) and target_pages = 3);
+
+drop policy if exists quran_muraajaah_progress_select on public.quran_muraajaah_progress;
+create policy quran_muraajaah_progress_select on public.quran_muraajaah_progress
+for select to authenticated
+using (exists (
+  select 1 from public.couple_members cm
+  where cm.couple_id = quran_muraajaah_progress.couple_id and cm.user_id = (select auth.uid())
+));
+
+drop policy if exists quran_muraajaah_progress_insert on public.quran_muraajaah_progress;
+create policy quran_muraajaah_progress_insert on public.quran_muraajaah_progress
+for insert to authenticated
+with check (
+  user_id = (select auth.uid())
+  and exists (
+    select 1 from public.couple_members cm
+    where cm.couple_id = quran_muraajaah_progress.couple_id and cm.user_id = (select auth.uid())
+  )
+);
+
+drop policy if exists quran_muraajaah_progress_update on public.quran_muraajaah_progress;
+create policy quran_muraajaah_progress_update on public.quran_muraajaah_progress
+for update to authenticated
+using (
+  user_id = (select auth.uid())
+  and exists (
+    select 1 from public.couple_members cm
+    where cm.couple_id = quran_muraajaah_progress.couple_id and cm.user_id = (select auth.uid())
+  )
+)
+with check (
+  user_id = (select auth.uid())
+  and exists (
+    select 1 from public.couple_members cm
+    where cm.couple_id = quran_muraajaah_progress.couple_id and cm.user_id = (select auth.uid())
+  )
+);
+
+drop policy if exists quran_muraajaah_progress_delete on public.quran_muraajaah_progress;
+create policy quran_muraajaah_progress_delete on public.quran_muraajaah_progress
+for delete to authenticated
+using (
+  user_id = (select auth.uid())
+  and exists (
+    select 1 from public.couple_members cm
+    where cm.couple_id = quran_muraajaah_progress.couple_id and cm.user_id = (select auth.uid())
+  )
+);
+
+drop policy if exists quran_ayah_notes_select on public.quran_ayah_notes;
+create policy quran_ayah_notes_select on public.quran_ayah_notes
+for select to authenticated
+using (exists (
+  select 1 from public.couple_members cm
+  where cm.couple_id = quran_ayah_notes.couple_id and cm.user_id = (select auth.uid())
+));
+
+drop policy if exists quran_ayah_notes_insert on public.quran_ayah_notes;
+create policy quran_ayah_notes_insert on public.quran_ayah_notes
+for insert to authenticated
+with check (
+  created_by = (select auth.uid())
+  and exists (
+    select 1 from public.couple_members cm
+    where cm.couple_id = quran_ayah_notes.couple_id and cm.user_id = (select auth.uid())
+  )
+);
+
+drop policy if exists quran_ayah_notes_update on public.quran_ayah_notes;
+create policy quran_ayah_notes_update on public.quran_ayah_notes
+for update to authenticated
+using (
+  created_by = (select auth.uid())
+  and exists (
+    select 1 from public.couple_members cm
+    where cm.couple_id = quran_ayah_notes.couple_id and cm.user_id = (select auth.uid())
+  )
+)
+with check (
+  created_by = (select auth.uid())
+  and exists (
+    select 1 from public.couple_members cm
+    where cm.couple_id = quran_ayah_notes.couple_id and cm.user_id = (select auth.uid())
+  )
+);
+
+drop policy if exists quran_ayah_notes_delete on public.quran_ayah_notes;
+create policy quran_ayah_notes_delete on public.quran_ayah_notes
+for delete to authenticated
+using (
+  created_by = (select auth.uid())
+  and exists (
+    select 1 from public.couple_members cm
+    where cm.couple_id = quran_ayah_notes.couple_id and cm.user_id = (select auth.uid())
+  )
+);
