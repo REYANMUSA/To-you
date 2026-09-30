@@ -82,9 +82,11 @@ function login(){s.signup=false;s.auth=false;s.demo=false;save();render()}
 function startDemo(){s=clone(fresh);Object.assign(s,clone(demoSeed));s.demo=true;s.auth=false;s.profile={name:'Demo Me',email:'demo@toyou.app',avatar:'',provider:'demo',accent:'#718c73'};s.tour=true;save();render();toast('Demo mode started')}
 async function googleLogin(){if(!sb)return toast('Add Supabase URL + anon key first');const {error}=await sb.auth.signInWithOAuth({provider:'google',options:{redirectTo:location.origin+location.pathname}});if(error)toast(error.message)}
 async function emailAuth(){let e=document.getElementById('loginEmail').value.trim(),p=document.getElementById('loginPass').value;if(!e||p.length<6)return toast('Use a valid email and 6+ character password');if(!sb)return toast('Add Supabase URL + anon key first');let r=s.signup?await sb.auth.signUp({email:e,password:p}):await sb.auth.signInWithPassword({email:e,password:p});if(r.error)return toast(r.error.message);if(s.signup&&r.data.user&&!r.data.session)return toast('Check your email to confirm your account')}
-async function signOut(){if(sb)await sb.auth.signOut();KEY=BASE_KEY;s=clone(fresh);render()}
+async function signOut(){if(quranPollTimer){clearInterval(quranPollTimer);quranPollTimer=null}if(sb)await sb.auth.signOut();KEY=BASE_KEY;s=clone(fresh);render()}
 let authQueue=Promise.resolve();
 let needChannel=null;
+let quranPollTimer=null;
+let quranLastPartnerProgressKey='';
 async function showNeedNotification(name){
   if(!('Notification' in window)||Notification.permission!=='granted')return;
   try{
@@ -127,6 +129,44 @@ function startNeedRealtime(uid){
     save();render();
     if(s.settings.notifications)showNeedNotification(s.partner?.name||'She');
   }).subscribe();
+}
+
+function showQuranPartnerNotification(body){
+  if(!s.settings.notifications||!('Notification' in window)||Notification.permission!=='granted')return;
+  navigator.serviceWorker?.ready.then(reg=>reg.showNotification('Qur’an — Us',{body,icon:'./icon.svg',badge:'./icon.svg',tag:'to-you-quran'})).catch(()=>{});
+}
+
+function startQuranLiveSync(coupleId){
+  if(quranPollTimer){clearInterval(quranPollTimer);quranPollTimer=null}
+  quranLastPartnerProgressKey='';
+  if(!sb||!s.auth||!coupleId||!s.partner?.id)return;
+  const poll=async()=>{
+    const date=todayKey();
+    const r=await sb.from('quran_muraajaah_progress').select('*').eq('couple_id',coupleId).eq('quran_date',date);
+    if(r.error)return;
+    const rows=r.data||[];
+    const partnerRows=rows.filter(x=>x.user_id===s.partner?.id);
+    const key=JSON.stringify(partnerRows.map(x=>[x.user_id,x.pages_completed,x.updated_at]));
+    const changed=quranLastPartnerProgressKey!==''&&key!==quranLastPartnerProgressKey;
+    quranLastPartnerProgressKey=key;
+    s.quranUsProgress=rows;
+    if(changed){
+      const p=partnerRows[0];
+      s.notifications.unshift({
+        id:'quran-'+Date.now(),
+        text:(s.partner?.name||'She')+' updated Qur’an muraaja’ah.',
+        date:new Date().toISOString(),
+        status:'received'
+      });
+      showQuranPartnerNotification(
+        (s.partner?.name||'She')+(p?.pages_completed===3?' completed today’s 3-page muraaja’ah.':' updated today’s Qur’an progress.')
+      );
+    }
+    save();
+    if(s.screen==='quranTogether')render();
+  };
+  poll();
+  quranPollTimer=setInterval(poll,5000);
 }
 
 let lastQueuedUserId='__unset__';
@@ -266,6 +306,7 @@ async function hydrateUser(user){
   const rr=await sb.from('streak_restores').select('id',{count:'exact',head:true}).eq('user_id',user.id).gte('created_at',monthStart.toISOString());
   s.streakRestoresUsed=rr.count||0;
   await refreshPartner();
+  startQuranLiveSync(s.partner?.coupleId);
   await hydrateCoreData();
 }
 function connectSheet(){openSheet(modal('Connect with Her',`<p class="muted">Connect only when both of you intentionally choose to. Private data stays private.</p><div class="field"><label>Her connection code</label><input id="connectCode" placeholder="TOYOU-7K4P-92" autocapitalize="characters"></div><button class="btn" style="width:100%" onclick="redeemCode()">Connect</button><div class="or"><span>or</span></div><button class="btn secondary" style="width:100%" onclick="createCode()">Create my code</button><div id="codeBox" class="empty"></div>`))}
@@ -285,9 +326,12 @@ async function refreshPartner(){
     const p=data[0];
     s.partner={id:p.partner_id,coupleId:p.couple_id,name:p.partner_name||'Her',avatar:p.partner_avatar||'',email:'',provider:''};
     s.connected=true;
+    startQuranLiveSync(p.couple_id);
   }else{
     s.partner=null;
     s.connected=false;
+    if(quranPollTimer){clearInterval(quranPollTimer);quranPollTimer=null}
+    quranLastPartnerProgressKey='';
   }
   save();render();
   return s.connected;
