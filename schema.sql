@@ -354,3 +354,21 @@ create index if not exists quran_ayah_notes_created_by_idx
   on public.quran_ayah_notes(created_by);
 create index if not exists quran_muraajaah_progress_user_idx
   on public.quran_muraajaah_progress(user_id);
+
+
+-- Push notification configuration is RLS-locked: only service-role/Edge Functions can read it.
+create table if not exists public.to_you_push_config (
+  id boolean primary key default true check (id),
+  vapid_public text not null,
+  vapid_private text not null,
+  cron_secret text not null,
+  created_at timestamptz not null default now()
+);
+alter table public.to_you_push_config enable row level security;
+revoke all on public.to_you_push_config from anon, authenticated;
+drop policy if exists to_you_push_config_deny on public.to_you_push_config;
+create policy to_you_push_config_deny
+  on public.to_you_push_config
+  for all to anon, authenticated
+  using (false)
+  with check (false);
