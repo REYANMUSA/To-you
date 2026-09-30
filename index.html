@@ -439,7 +439,7 @@ async function toggleQuranMuraajaah(){
   const rest=s.quranUsProgress.filter(x=>!(x.user_id===s.profile.id&&x.quran_date===date));if(row.pages_completed===3)rest.push(row);s.quranUsProgress=rest;save();render();toast(row.pages_completed===3?'3 pages completed ✓':'Marked incomplete');
 }
 function addMeaningfulAyah(){
-  if(!s.connected||!s.partner?.coupleId)return toast('Connect first');
+  if(!sb||!s.auth)return toast('Sign in to use shared Qur’an');if(!s.connected||!s.partner?.coupleId)return toast('Connect first');
   openSheet(modal('Save a meaningful ayah',`<p class="muted">Save an ayah that meant something to you. It will be shared with her.</p><div class="field"><label>Surah</label><input id="ayahSurah" placeholder="Al-Baqarah"></div><div class="field"><label>Ayah number</label><input id="ayahNumber" type="number" min="1" placeholder="286"></div><div class="field"><label>Arabic</label><textarea id="ayahArabic" placeholder="Paste the exact Arabic ayah"></textarea></div><div class="field"><label>Translation</label><textarea id="ayahTranslation" placeholder="Paste the translation you trust"></textarea></div><div class="field"><label>Why it was meaningful <span class="muted">(optional)</span></label><textarea id="ayahNote" placeholder="A short reflection..."></textarea></div><button class="btn" style="width:100%" onclick="saveMeaningfulAyah()">Save ayah</button>`));
 }
 async function saveMeaningfulAyah(){
