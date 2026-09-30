@@ -16,7 +16,7 @@ This build keeps the existing Phase 5 visual design and changes only the request
 ## Supabase setup
 
 1. Create/open your Supabase project.
-2. Run `schema.sql` in the Supabase SQL Editor.
+2. **Do not rerun `schema.sql` on the live project.** The live database has newer migrations/schema than this historical bootstrap file; the current project is already configured.
 3. Enable Google provider in Supabase Authentication if you want Google sign-in.
 4. Set the Google OAuth redirect URL to your deployed app URL.
 5. Put only the public project URL and anon/publishable key in `config.js`.
