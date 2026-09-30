@@ -112,7 +112,7 @@ async function hydrateCoreData(){
   if(!sb||!s.auth)return;
   const uid=s.profile.id;
   const today=todayKey();
-  const [h,t,g,j,hc,tc,sg,nr,jm,dd,pr]=await Promise.all([
+  const [h,t,g,j,hc,tc,sg,nr,jm,dd,pr,co,no,qo,re,hp]=await Promise.all([
     sb.from('habits').select('*').eq('user_id',uid).eq('archived',false),
     sb.from('tasks').select('*').eq('user_id',uid).eq('archived',false),
     sb.from('goals').select('*').eq('user_id',uid),
@@ -123,7 +123,12 @@ async function hydrateCoreData(){
     sb.from('need_you_requests').select('id,sender_id,status,created_at').eq('recipient_id',uid).order('created_at',{ascending:false}).limit(20),
     sb.from('journey_media').select('journey_event_id,storage_path').order('created_at',{ascending:false}),
     sb.from('dhikr_daily').select('*').eq('user_id',uid).eq('dhikr_date',today).maybeSingle(),
-    sb.from('prayer_settings').select('*').eq('user_id',uid).maybeSingle()
+    sb.from('prayer_settings').select('*').eq('user_id',uid).maybeSingle(),
+    sb.from('courses').select('*').order('created_at',{ascending:true}),
+    sb.from('notes').select('*').eq('user_id',uid).order('created_at',{ascending:false}),
+    sb.from('quran_goals').select('*').eq('user_id',uid).order('created_at',{ascending:false}),
+    sb.from('reflections').select('*').eq('user_id',uid).order('reflection_date',{ascending:false}).limit(100),
+    sb.from('hadith_progress').select('hadith_id,first_learned_at,mastered').eq('user_id',uid)
   ]);
 
   if(h.error)toast('Could not load habits: '+h.error.message);else s.habits=(h.data||[]).map(x=>({id:x.id,name:x.name||x.title,frequency:frequencyLabel(x.frequency)}));
@@ -172,6 +177,12 @@ async function hydrateCoreData(){
       Isha:!!pr.data.isha_enabled
     };
   }else if(pr.error)toast('Could not load prayer reminders: '+pr.error.message);
+
+  if(!co.error)s.courses=(co.data||[]).map(x=>({id:x.id,name:x.title,owner:x.user_id===uid?'me':'her',progress:x.progress||0,status:x.status||'In progress',coupleId:x.couple_id}));else toast('Could not load courses: '+co.error.message);
+  if(!no.error)s.notes=(no.data||[]).map(x=>({id:x.id,title:x.title,body:x.body,date:x.created_at}));else toast('Could not load notes: '+no.error.message);
+  if(!qo.error)s.quranGoals=(qo.data||[]).map(x=>({id:x.id,title:x.title,target:x.target||'',progress:x.progress||0}));else toast('Could not load Qur’an goals: '+qo.error.message);
+  if(!re.error)s.reflections=(re.data||[]).map(x=>{let v={};try{v=JSON.parse(x.content||'{}')}catch{}return {id:x.id,date:x.reflection_date,good:v.good||'',improve:v.improve||'',grateful:v.grateful||''}});else toast('Could not load reflections: '+re.error.message);
+  if(!hp.error)s.hadithLearned=(hp.data||[]).filter(x=>x.mastered||x.first_learned_at).map(x=>x.hadith_id);else toast('Could not load Hadith progress: '+hp.error.message);
 
   save();render();
 }
