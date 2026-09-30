@@ -307,7 +307,13 @@ async function resetDhikr(){
   s.dhikr=0;s.dhikrDate=todayKey();save();render();closeSheet();dhikr();await persistDhikr();
 }
 async function markHadithLearned(hadithId){const err=await cloudUpsert('hadith_progress',{user_id:s.profile.id,hadith_id:hadithId,first_learned_at:new Date().toISOString(),review_count:0,last_reviewed_at:new Date().toISOString(),mastered:true});if(err)return;s.hadithLearned=[...new Set([...s.hadithLearned,hadithId])];save();closeSheet();render();toast('Marked learned')}
-function hadith(){openSheet(modal('Today’s Hadith',`<span class="pill">Day 1 · Sahih al-Bukhari</span><h2>إِنَّمَا الأَعْمَالُ بِالنِّيَّاتِ</h2><p><em>Innamal-a‘mālu bin-niyyāt</em></p><p>“Actions are judged by intentions.”</p><p class="muted">Reference: Sahih al-Bukhari 1.</p><div class="grid2"><button class="btn secondary" onclick="toast('Practice mode')">Practice</button><button class="btn" onclick="markHadithLearned(1)">Mark learned</button></div>`))}
+async function hadith(){
+  let h=null;
+  if(sb&&s.auth){const day=((Math.floor((Date.now()-new Date(new Date().getFullYear(),0,1).getTime())/86400000))%365)+1;const r=await sb.from('hadiths').select('*').eq('verified',true).eq('course_day',day).in('collection',['sahih_bukhari','sahih_muslim']).limit(1).maybeSingle();h=r.data}
+  h=h||{id:null,collection:'sahih_bukhari',reference:'Sahih al-Bukhari 1',arabic:'إِنَّمَا الْأَعْمَالُ بِالنِّيَّاتِ',transliteration:'Innamal-a‘malu bin-niyyat',english:'The reward of deeds depends upon intentions, and every person will get the reward according to what they intended.',course_day:1};
+  const action=h.id?"markHadithLearned('"+h.id+"')":"toast('Hadith is ready for review')";
+  openSheet(modal('Today’s Hadith',`<span class="pill">Day ${h.course_day} · ${esc(h.collection==='sahih_muslim'?'Sahih Muslim':'Sahih al-Bukhari')}</span><h2>${esc(h.arabic)}</h2><p><em>${esc(h.transliteration||'')}</em></p><p>“${esc(h.english)}”</p><p class="muted">Reference: ${esc(h.reference)}</p><div class="grid2"><button class="btn secondary" onclick="toast('Practice mode')">Practice</button><button class="btn" onclick="${action}">Mark learned</button></div>`))
+}
 async function challenge(){
   let q=null;
   if(sb&&s.auth){const r=await sb.from('deen_challenges').select('*').eq('active',true).limit(1).maybeSingle();q=r.data}
