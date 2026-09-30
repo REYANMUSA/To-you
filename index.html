@@ -581,8 +581,8 @@ function settings(){return `<main class="page"><h1>Settings</h1><section class="
 function nav(){return `<nav class="nav">${[['home','⌂','Home'],['progress','◔','Progress'],['deen','☪','Deen'],['us','♡','Us']].map(([id,i,l])=>`<button class="${s.screen===id?'active':''}" onclick="go('${id}')"><div>${i}</div>${l}</button>`).join('')}</nav>`}
 function render(){document.body.classList.toggle('dark',s.theme==='dark');document.body.classList.toggle('girl-theme',s.profile.visualMode==='girl');document.getElementById('app').innerHTML=(!s.auth&&!s.demo)?authPage():(!s.tour?onboarding():header()+page()+nav())}
 function page(){switch(s.screen){case'progress':return progress();case'deen':return deen();case'us':return us();case'quranTogether':return quranTogether();case'grow':return grow();case'ourg':return ourg();case'courses':return courses();case'deenTogether':return deenTogether();case'future':return future();case'journey':return journeyPage();case'notes':return notes();case'search':return searchPage();case'settings':return settings();default:return home()}}
-render();
 setTimeout(function(){var x=document.getElementById('splash');if(x)x.classList.add('hide')},650);
+try{render()}catch(e){console.error('to you render error',e);var x=document.getElementById('splash');if(x)x.classList.add('hide');var app=document.getElementById('app');if(app)app.innerHTML='<main class="page"><section class="card"><strong>to you</strong><div class="muted" style="margin-top:8px">Something needs a refresh.</div><button class="btn" style="margin-top:12px" onclick="location.reload()">Refresh</button></section></main>'}
 initAuth();
 if('serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js').catch(()=>{});
 </script></body></html>
