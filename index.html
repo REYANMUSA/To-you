@@ -86,6 +86,7 @@ async function signOut(){if(quranPollTimer){clearInterval(quranPollTimer);quranP
 let authQueue=Promise.resolve();
 let needChannel=null;
 let quranPollTimer=null;
+let quranChannel=null;
 let quranLastPartnerProgressKey='';
 async function showNeedNotification(name){
   if(!('Notification' in window)||Notification.permission!=='granted')return;
@@ -138,8 +139,37 @@ function showQuranPartnerNotification(body){
 
 function startQuranLiveSync(coupleId){
   if(quranPollTimer){clearInterval(quranPollTimer);quranPollTimer=null}
+  if(quranChannel&&sb){sb.removeChannel(quranChannel);quranChannel=null}
   quranLastPartnerProgressKey='';
   if(!sb||!s.auth||!coupleId||!s.partner?.id)return;
+
+  const applyRows=(rows,notifyPartner=false)=>{
+    const next=rows||[];
+    const partnerRows=next.filter(x=>x.user_id===s.partner?.id);
+    const key=JSON.stringify(partnerRows.map(x=>[x.user_id,x.pages_completed,x.updated_at]));
+    const changed=quranLastPartnerProgressKey!==''&&key!==quranLastPartnerProgressKey;
+    quranLastPartnerProgressKey=key;
+    s.quranUsProgress=next;
+    if(notifyPartner&&changed){
+      const p=partnerRows[0];
+      s.notifications.unshift({id:'quran-'+Date.now(),text:(s.partner?.name||'Her')+' updated Qur’an muraaja’ah.',date:new Date().toISOString(),status:'received'});
+      showQuranPartnerNotification((s.partner?.name||'She')+(p?.pages_completed===3?' completed today’s 3-page muraaja’ah.':' updated today’s Qur’an progress.'));
+    }
+    save();
+    if(s.screen==='quranTogether')render();
+  };
+
+  quranChannel=sb.channel('to-you-quran-'+coupleId)
+    .on('postgres_changes',{event:'*',schema:'public',table:'quran_muraajaah_progress',filter:'couple_id=eq.'+coupleId},payload=>{
+      const row=payload.new||payload.old;
+      if(!row)return;
+      if(row.quran_date!==todayKey())return;
+      sb.from('quran_muraajaah_progress').select('*').eq('couple_id',coupleId).eq('quran_date',todayKey()).then(r=>{
+        if(!r.error)applyRows(r.data||[],row.user_id===s.partner?.id);
+      });
+    })
+    .subscribe();
+
   const poll=async()=>{
     const date=todayKey();
     const r=await sb.from('quran_muraajaah_progress').select('*').eq('couple_id',coupleId).eq('quran_date',date);
@@ -149,21 +179,7 @@ function startQuranLiveSync(coupleId){
     const key=JSON.stringify(partnerRows.map(x=>[x.user_id,x.pages_completed,x.updated_at]));
     const changed=quranLastPartnerProgressKey!==''&&key!==quranLastPartnerProgressKey;
     quranLastPartnerProgressKey=key;
-    s.quranUsProgress=rows;
-    if(changed){
-      const p=partnerRows[0];
-      s.notifications.unshift({
-        id:'quran-'+Date.now(),
-        text:(s.partner?.name||'She')+' updated Qur’an muraaja’ah.',
-        date:new Date().toISOString(),
-        status:'received'
-      });
-      showQuranPartnerNotification(
-        (s.partner?.name||'She')+(p?.pages_completed===3?' completed today’s 3-page muraaja’ah.':' updated today’s Qur’an progress.')
-      );
-    }
-    save();
-    if(s.screen==='quranTogether')render();
+    applyRows(rows,changed);
   };
   poll();
   quranPollTimer=setInterval(poll,5000);
