@@ -77,7 +77,7 @@ function pct(){let all=s.habits.length+s.tasks.length,done=s.habits.filter(x=>do
 function openSheet(html){document.body.insertAdjacentHTML('beforeend',html)} function closeSheet(){document.querySelector('.modal')?.remove()}
 function modal(title,body){return `<div class="modal" onclick="if(event.target===this)closeSheet()"><div class="sheet"><div class="row"><h2 style="margin:0">${title}</h2><button class="icon" onclick="closeSheet()">×</button></div>${body}</div></div>`}
 function profile(){openSheet(modal('Your profile',`<div class="profileRow" style="display:flex;gap:12px;align-items:center;margin:18px 0">${avatar(s.profile.name,s.profile.avatar)}<div><strong>${esc(s.profile.name||'Your profile')}</strong><div class="muted">${esc(s.profile.email)}</div></div></div><div class="field"><label>Name</label><input id="pname" value="${esc(s.profile.name||'')}" placeholder="Your name"></div><div class="field"><label>Profile photo URL <span class="muted">(optional)</span></label><input id="pavatar" value="${esc(s.profile.avatar||'')}" placeholder="https://..."></div><button class="btn" style="width:100%" onclick="saveProfile()">Save profile</button>`))}
-async function saveProfile(){let n=document.getElementById('pname').value.trim();if(!n)return toast('Enter your name');s.profile.name=n;s.profile.avatar=document.getElementById('pavatar').value.trim();save();if(sb&&s.auth){let {error}=await sb.from('profiles').upsert({id:s.profile.id,display_name:n,avatar_url:s.profile.avatar||null,visual_mode:s.profile.visualMode||'classic',dark_mode:s.theme==='dark',notifications:!!s.settings.notifications,updated_at:new Date().toISOString()});if(error)return toast(error.message)}closeSheet();render();toast('Profile saved')}
+async function saveProfile(){let n=document.getElementById('pname').value.trim();if(!n)return toast('Enter your name');const previousName=s.profile.name,previousAvatar=s.profile.avatar;s.profile.name=n;s.profile.avatar=document.getElementById('pavatar').value.trim();if(sb&&s.auth){let {error}=await sb.from('profiles').upsert({id:s.profile.id,display_name:n,avatar_url:s.profile.avatar||null,visual_mode:s.profile.visualMode||'classic',dark_mode:s.theme==='dark',notifications:!!s.settings.notifications,updated_at:new Date().toISOString()});if(error){s.profile.name=previousName;s.profile.avatar=previousAvatar;save();return toast(error.message)}}save();closeSheet();render();toast('Profile saved')}
 function authPage(){return `<main class="authPage"><div class="authLogo">to you</div><p class="authTag">Becoming better, one day at a time.</p><section class="authCard"><div class="authSwitch"><button class="${!s.signup?'active':''}" onclick="s.signup=false;render()">Log in</button><button class="${s.signup?'active':''}" onclick="s.signup=true;render()">Create account</button></div><button class="googleBtn" onclick="googleLogin()"><span class="googleMark">G</span> Continue with Google</button><div class="or"><span>or</span></div><div class="field"><label>Email</label><input id="loginEmail" type="email" autocomplete="email" placeholder="you@example.com"></div><div class="field"><label>Password</label><input id="loginPass" type="password" autocomplete="current-password" placeholder="••••••••"></div><button class="btn" style="width:100%" onclick="emailAuth()">${s.signup?'Create account':'Log in'}</button><button class="btn secondary" style="width:100%;margin-top:8px" onclick="startDemo()">Try Demo</button><p class="muted tiny center">Your private data stays private. Demo data is separate from real accounts.</p></section></main>`}
 function login(){s.signup=false;s.auth=false;s.demo=false;save();render()}
 function startDemo(){s=clone(fresh);Object.assign(s,clone(demoSeed));s.demo=true;s.auth=false;s.profile={name:'Demo Me',email:'demo@toyou.app',avatar:'',provider:'demo',accent:'#718c73'};s.tour=true;save();render();toast('Demo mode started')}
@@ -376,22 +376,27 @@ async function createGoal(){let n=document.getElementById('newGoal').value.trim(
 function editGoal(id){let g=s.goals.find(x=>x.id===id);if(!g)return;openSheet(modal('Update goal',`<div class="field"><label>Progress: <span id="gpv">${g.progress}</span>%</label><input id="gprogress" type="range" min="0" max="100" value="${g.progress}" oninput="gpv.textContent=this.value"></div><div class="row" style="margin:12px 0"><span>Share with her</span><button class="toggle ${g.shared?'on':''}" id="gshare" onclick="this.classList.toggle('on')"><i></i></button></div><button class="btn" style="width:100%" onclick="saveGoalEdit('${id}')">Save progress</button><button class="btn danger" style="width:100%;margin-top:8px" onclick="if(confirm('Delete this goal?')){s.goals=s.goals.filter(x=>x.id!=='${id}');if(sb&&s.auth)cloudDelete('goals','${id}');save();closeSheet();render();toast('Goal deleted')}">Delete goal</button>`))}
 async function saveGoalEdit(id){let g=s.goals.find(x=>x.id===id);if(!g)return;g.progress=+gprogress.value;g.shared=document.getElementById('gshare')?.classList.contains('on');const err=await cloudUpsert('goals',{id:g.id,user_id:s.profile.id,owner_user_id:s.profile.id,title:g.title,description:g.desc||'',progress:g.progress,target_date:g.target||null,shared_with_partner:g.shared});if(err)return;save();closeSheet();render();toast('Goal saved')}
 async function setPrayer(key){
-  s.prayer[key]=!s.prayer[key];save();render();closeSheet();prayer();
-  await cloudUpsert('prayer_settings',{
-        user_id:s.profile.id,
-    reminders_enabled:Object.values(s.prayer).some(Boolean),
-    fajr_enabled:!!s.prayer.Fajr,
-    dhuhr_enabled:!!s.prayer.Dhuhr,
-    asr_enabled:!!s.prayer.Asr,
-    maghrib_enabled:!!s.prayer.Maghrib,
-    isha_enabled:!!s.prayer.Isha
-  });if(err){s.prayer[key]=previous;save();toast('Could not save prayer reminder: '+err.message);return}save();render();closeSheet();prayer();
+  const previous=!!s.prayer[key];
+  s.prayer[key]=!previous;
+  if(sb&&s.auth){
+    const err=await cloudUpsert('prayer_settings',{
+      user_id:s.profile.id,
+      reminders_enabled:Object.values(s.prayer).some(Boolean),
+      fajr_enabled:!!s.prayer.Fajr,
+      dhuhr_enabled:!!s.prayer.Dhuhr,
+      asr_enabled:!!s.prayer.Asr,
+      maghrib_enabled:!!s.prayer.Maghrib,
+      isha_enabled:!!s.prayer.Isha
+    });
+    if(err){s.prayer[key]=previous;save();toast('Could not save prayer reminder: '+err.message);return}
+  }
+  save();render();closeSheet();prayer();
 }
 function prayer(){openSheet(modal('Prayer reminders',`<p class="muted">Reminders only — prayers are not task checkboxes.</p><div class="stack">${Object.keys(s.prayer).map(k=>`<div class="item row"><div><strong>${k}</strong><div class="muted">Reminder ${s.prayer[k]?'on':'off'}</div></div><button class="toggle ${s.prayer[k]?'on':''}" onclick="setPrayer('${k}')"><i></i></button></div>`).join('')}</div>`))}
 function dhikr(){var items=[['astaghfirullah','أَسْتَغْفِرُ اللَّهَ','Astaghfirullah'],['subhanallah','سُبْحَانَ اللَّهِ','Subhanallah'],['alhamdulillah','الْحَمْدُ لِلَّهِ','Alhamdulillah'],['la_ilaha_illallah','لَا إِلَٰهَ إِلَّا اللَّهُ','La ilaha illallah']];var cards=items.map(function(x){var n=s.dhikrCounts[x[0]]||0;return '<button class="dhikrBtn" onclick="addDhikr(\''+x[0]+'\')"><div class="dhikrArabic">'+x[1]+'</div><div class="dhikrName">'+x[2]+'</div><div class="dhikrCount">'+n+'/100</div><div class="dhikrProgress"><i style="width:'+n+'%"></i></div></button>'}).join('');openSheet(modal('Dhikr','<div class="dhikrHub"><div class="dhikrHero"><div><div class="muted">Today</div><div class="dhikrTotal">'+s.dhikr+'/400</div></div><span class="pill">4 adhkar</span></div><div class="dhikrGrid">'+cards+'</div><button class="btn ghost" style="width:100%;margin-top:12px" onclick="resetDhikr()">Reset today</button></div>'))}
 async function persistDhikr(){
-  if(!sb||!s.auth)return;
-  await cloudUpsert('dhikr_daily',{
+  if(!sb||!s.auth)return null;
+  return await cloudUpsert('dhikr_daily',{
     user_id:s.profile.id,
     dhikr_date:s.dhikrDate||todayKey(),
     count:s.dhikr,
@@ -411,8 +416,12 @@ async function addDhikr(id){
   save();render();closeSheet();dhikr();
 }
 async function resetDhikr(){
+  const previous=clone(s.dhikrCounts),previousTotal=s.dhikr;
   s.dhikrCounts={astaghfirullah:0,subhanallah:0,alhamdulillah:0,la_ilaha_illallah:0};
-  s.dhikr=0;s.dhikrDate=todayKey();save();render();closeSheet();dhikr();await persistDhikr();
+  s.dhikr=0;s.dhikrDate=todayKey();
+  const err=await persistDhikr();
+  if(err){s.dhikrCounts=previous;s.dhikr=previousTotal;save();toast('Could not reset Dhikr');return}
+  save();render();closeSheet();dhikr();
 }
 async function markHadithLearned(hadithId){const err=await cloudUpsert('hadith_progress',{user_id:s.profile.id,hadith_id:hadithId,first_learned_at:new Date().toISOString(),review_count:0,last_reviewed_at:new Date().toISOString(),mastered:true});if(err)return;s.hadithLearned=[...new Set([...s.hadithLearned,hadithId])];save();closeSheet();render();toast('Marked learned')}
 async function hadith(){
@@ -457,7 +466,7 @@ async function addJourneyEvent(){
   s.journey.push({id,title:t,date,type,desc,photo:photoData});
   if(sb&&s.auth){
     const err=await cloudUpsert('journey_events',{id,owner_user_id:s.profile.id,created_by:s.profile.id,couple_id:coupleId,title:t,event_date:date,time_position:type,description:desc,photo_url:null});
-    if(err){journeyPhotoData='';save();closeSheet();render();return}
+    if(err){s.journey=s.journey.filter(x=>x.id!==id);journeyPhotoData='';save();closeSheet();render();return}
     if(photoData){
       try{
         const path=(coupleId||s.profile.id)+'/'+id+'.jpg';
