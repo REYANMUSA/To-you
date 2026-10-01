@@ -242,12 +242,7 @@ async function cloudDelete(table,id){
   if(r.error)toast('Sync error: '+r.error.message);
   return r.error||null;
 }
-async function cloudDelete(table,id){
-  if(!sb||!s.auth)return null;
-  const r=await sb.from(table).delete().eq('id',id);
-  if(r.error)toast('Sync error: '+r.error.message);
-  return r.error||null;
-}
+
 async function hydrateCoreData(){
   if(!sb||!s.auth)return;
   const uid=s.profile.id;
