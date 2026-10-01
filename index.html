@@ -436,7 +436,7 @@ async function saveHabitEdit(id){
   }
   save();closeSheet();render();toast('Habit updated ✓');
 }
-function deleteHabit(id){
+async function deleteHabit(id){
   const item=s.habits.find(x=>x.id===id);if(!item)return;
   if(!confirm('Delete this habit and its completion history?'))return;
   if(sb&&s.auth){
