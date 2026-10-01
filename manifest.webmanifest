@@ -1,10 +1,10 @@
 {
-  "name":"Amanah",
-  "short_name":"Amanah",
+  "name":"أمانة",
+  "short_name":"أمانة",
   "start_url":"./",
   "display":"standalone",
   "background_color":"#f7f7f4",
   "theme_color":"#718c73",
-  "description":"Amanah — Becoming better, one day at a time.",
+  "description":"أمانة — Becoming better, one day at a time.",
   "icons":[{"src":"icon-v2.svg","sizes":"any","type":"image/svg+xml","purpose":"any maskable"}]
 }
