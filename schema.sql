@@ -362,6 +362,7 @@ create table if not exists public.to_you_push_config (
   vapid_public text not null,
   vapid_private text not null,
   cron_secret text not null,
+  key_version integer not null default 1,
   created_at timestamptz not null default now()
 );
 alter table public.to_you_push_config enable row level security;
