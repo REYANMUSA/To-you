@@ -496,12 +496,18 @@ async function resetDhikr(){
   save();render();closeSheet();dhikr();
 }
 async function markHadithLearned(hadithId){if((s.hadithLearned||[]).includes(hadithId))return toast('Already learned');const now=new Date().toISOString();const err=await cloudUpsert('hadith_progress',{user_id:s.profile.id,hadith_id:hadithId,first_learned_at:now,review_count:0,last_reviewed_at:now,mastered:true});if(err)return;s.hadithLearned=[...new Set([...(s.hadithLearned||[]),hadithId])];save();closeSheet();render();toast('Marked learned')}
+async function hadithPractice(hadithId){
+  const h=(s.hadithCourse||[]).find(x=>x.id===hadithId)||s.dailyHadith;
+  if(!h)return toast('Hadith is not loaded yet');
+  openSheet(modal('Practice recall',`<span class="pill">Day ${h.course_day} · ${esc(h.reference||'')}</span><h3 style="margin-top:14px">Try to recall the meaning before revealing it.</h3><div class="card" style="margin-top:12px"><strong>Arabic</strong><p class="quranUsArabic" dir="rtl" style="font-size:22px;line-height:1.9">${esc(h.arabic||'')}</p></div><button class="btn secondary" style="width:100%;margin-top:10px" onclick="document.getElementById('practiceMeaning').classList.remove('hidden')">Reveal meaning</button><div id="practiceMeaning" class="card hidden" style="margin-top:10px"><p>${esc(h.english||'')}</p><div class="muted small">${esc(h.transliteration||'')}</div><button class="btn" style="width:100%;margin-top:10px" onclick="closeSheet();markHadithLearned('${h.id}')">I know this ✓</button></div>`));
+}
 async function hadith(){
   let h=null;
   if(sb&&s.auth){const day=hadithCourseDay();const r=await sb.from('hadiths').select('*').eq('verified',true).eq('course_day',day).in('collection',['sahih_bukhari','sahih_muslim']).limit(1).maybeSingle();h=r.data}
   h=h||{id:null,collection:'sahih_bukhari',reference:'Sahih al-Bukhari 1',arabic:'إِنَّمَا الْأَعْمَالُ بِالنِّيَّاتِ',transliteration:'Innamal-a‘malu bin-niyyat',english:'The reward of deeds depends upon intentions, and every person will get the reward according to what they intended.',course_day:1};
   const action=h.id?"markHadithLearned('"+h.id+"')":"toast('Hadith is ready for review')";
-  openSheet(modal('Today’s Hadith',`<span class="pill">Day ${h.course_day} · ${esc(h.collection==='sahih_muslim'?'Sahih Muslim':'Sahih al-Bukhari')}</span><h2>${esc(h.arabic)}</h2><p><em>${esc(h.transliteration||'')}</em></p><p>“${esc(h.english)}”</p><p class="muted">Reference: ${esc(h.reference)}</p><div class="grid2"><button class="btn secondary" onclick="toast('Practice mode')">Practice</button><button class="btn" onclick="${action}">Mark learned</button></div>`))
+  const practice=h.id?"hadithPractice('"+h.id+"')":"toast('Hadith is ready for review')";
+  openSheet(modal('Today’s Hadith',`<span class="pill">Day ${h.course_day} · ${esc(h.collection==='sahih_muslim'?'Sahih Muslim':'Sahih al-Bukhari')}</span><h2>${esc(h.arabic)}</h2><p><em>${esc(h.transliteration||'')}</em></p><p>“${esc(h.english)}”</p><p class="muted">Reference: ${esc(h.reference)}</p><div class="grid2"><button class="btn secondary" onclick="${practice}">Practice</button><button class="btn" onclick="${action}">Mark learned</button></div>`))
 }
 async function challenge(){
   let q=null;
