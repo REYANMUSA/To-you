@@ -79,7 +79,7 @@ async function restoreStreak(id){
   if(bag[missed])return toast('Your streak is already safe');
   const restore=await sb.from('streak_restores').insert({user_id:s.profile.id,habit_id:id,restored_date:missed}).select('id').single();
   if(restore.error)return toast('Restore failed: '+restore.error.message);
-  const complete=await sb.from('habit_completions').upsert({habit_id:id,owner_user_id:s.profile.id,completed_on:missed},{onConflict:'habit_id,owner_user_id,completed_on'});
+  const complete=await sb.from('habit_completions').upsert({habit_id:id,owner_user_id:s.profile.id,completed_on:missed},{onConflict:'habit_id,completed_on'});
   if(complete.error){if(restore.data?.id)await sb.from('streak_restores').delete().eq('id',restore.data.id);return toast('Could not save the restored day: '+complete.error.message)}
   bag[missed]=true;s.habitCompletions[id]=bag;s.streakRestoresUsed=(s.streakRestoresUsed||0)+1;save();render();toast('🔥 Streak restored • '+streakRestoresLeft()+' left this month');
 }
@@ -394,7 +394,7 @@ async function toggleItem(type,id){
   if(sb&&s.auth){
     const table=kind==='habit'?'habit_completions':'task_completions',key=kind==='habit'?'habit_id':'task_id';
     let err=null;
-    if(done)err=await cloudUpsert(table,{[key]:id,owner_user_id:s.profile.id,completed_on:todayKey()},{onConflict:key+',owner_user_id,completed_on'});
+    if(done)err=await cloudUpsert(table,{[key]:id,owner_user_id:s.profile.id,completed_on:todayKey()},{onConflict:key+',completed_on'});
     else{const r=await sb.from(table).delete().eq(key,id).eq('owner_user_id',s.profile.id).eq('completed_on',todayKey());err=r.error||null;if(err)toast('Sync error: '+err.message)}
     if(err){setDone(kind,id,previous);return}
   }
@@ -411,8 +411,8 @@ async function deleteHabit(id){
   const item=s.habits.find(x=>x.id===id);if(!item)return;
   if(!confirm('Delete this habit and its completion history?'))return;
   if(sb&&s.auth){
-    for(const [table,column,value] of [['habit_completions','habit_id',id],['habit_logs','habit_id',id],['streak_restores','habit_id',id]]){
-      const q=await sb.from(table).delete().eq(column,value).eq(table==='habit_logs'?'user_id':'owner_user_id',s.profile.id);
+    for(const [table,column,userColumn] of [['habit_completions','habit_id','owner_user_id'],['habit_logs','habit_id','user_id'],['streak_restores','habit_id','user_id']]){
+      const q=await sb.from(table).delete().eq(column,id).eq(userColumn,s.profile.id);
       if(q.error)return toast('Could not delete habit data: '+q.error.message);
     }
     const rh=await sb.from('habits').delete().eq('id',id).eq('user_id',s.profile.id);if(rh.error)return toast('Could not delete habit: '+rh.error.message);
