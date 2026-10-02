@@ -186,60 +186,33 @@ function startQuranLiveSync(coupleId){
   if(quranChannel&&sb){sb.removeChannel(quranChannel);quranChannel=null}
   quranLastPartnerProgressKey='';
   if(!sb||!s.auth||!coupleId||!s.partner?.id)return;
-
   const applyRows=(rows,notifyPartner=false)=>{
-    const incoming=rows||[];
-    const next=[...(s.quranUsProgress||[])];
-    // Merge server rows into the current state. A temporary empty/partial Realtime
-    // response must never erase a completion that is already known locally.
-    incoming.forEach(row=>{
-      const i=next.findIndex(x=>x.user_id===row.user_id&&x.quran_date===row.quran_date);
-      if(i>=0)next[i]=row;else next.push(row);
-    });
+    const incoming=rows||[],next=[...(s.quranUsProgress||[])];
+    incoming.forEach(row=>{const i=next.findIndex(x=>x.user_id===row.user_id&&x.quran_date===row.quran_date);if(i>=0)next[i]=row;else next.push(row)});
     const partnerRows=next.filter(x=>x.user_id===s.partner?.id&&x.quran_date===todayKey());
     const key=JSON.stringify(partnerRows.map(x=>[x.user_id,x.pages_completed,x.updated_at]));
     const changed=quranLastPartnerProgressKey!==''&&key!==quranLastPartnerProgressKey;
-    quranLastPartnerProgressKey=key;
-    s.quranUsProgress=next.filter(x=>x.quran_date===todayKey());
-    if(notifyPartner&&changed){
-      const p=partnerRows[0];
-      s.notifications.unshift({id:'quran-'+Date.now(),text:(s.partner?.name||'Her')+' updated Qur’an muraaja’ah.',date:new Date().toISOString(),status:'received'});
-      showQuranPartnerNotification((s.partner?.name||'She')+(p?.pages_completed===3?' completed today’s 3-page muraaja’ah.':' updated today’s Qur’an progress.'));
-    }
-    save();
-    if(s.screen==='quranTogether')render();
+    quranLastPartnerProgressKey=key;s.quranUsProgress=next.sort((a,b)=>String(b.quran_date).localeCompare(String(a.quran_date)));
+    if(notifyPartner&&changed){const p=partnerRows[0];s.notifications.unshift({id:'quran-'+Date.now(),text:(s.partner?.name||'Her')+' updated Qur’an muraaja’ah.',date:new Date().toISOString(),status:'received'});showQuranPartnerNotification((s.partner?.name||'She')+(p?.pages_completed===3?' completed today’s 3-page muraaja’ah.':' updated today’s Qur’an progress.'))}
+    save();if(s.screen==='quranTogether')render();
   };
-
   quranChannel=sb.channel('to-you-quran-'+coupleId)
     .on('postgres_changes',{event:'*',schema:'public',table:'quran_muraajaah_progress',filter:'couple_id=eq.'+coupleId},payload=>{
-      const row=payload.new||payload.old;
-      if(!row)return;
-      if(row.quran_date!==todayKey())return;
-      sb.from('quran_muraajaah_progress').select('*').eq('couple_id',coupleId).eq('quran_date',todayKey()).then(r=>{
-        if(!r.error)applyRows(r.data||[],row.user_id===s.partner?.id);
-      });
+      const row=payload.new||payload.old;if(!row)return;
+      sb.from('quran_muraajaah_progress').select('*').eq('couple_id',coupleId).order('quran_date',{ascending:false}).limit(800).then(r=>{if(!r.error)applyRows(r.data||[],row.user_id===s.partner?.id)});
     })
     .on('postgres_changes',{event:'*',schema:'public',table:'quran_ayah_notes',filter:'couple_id=eq.'+coupleId},payload=>{
-      sb.from('quran_ayah_notes').select('*').eq('couple_id',coupleId).order('created_at',{ascending:false}).limit(20).then(r=>{
-        if(!r.error){s.quranUsAyahs=r.data||[];save();if(s.screen==='quranTogether')render()}
-      });
+      sb.from('quran_ayah_notes').select('*').eq('couple_id',coupleId).order('created_at',{ascending:false}).limit(50).then(r=>{if(!r.error){s.quranUsAyahs=r.data||[];save();if(s.screen==='quranTogether')render()}});
     })
     .subscribe();
-
   const poll=async()=>{
-    const date=todayKey();
-    const r=await sb.from('quran_muraajaah_progress').select('*').eq('couple_id',coupleId).eq('quran_date',date);
+    const r=await sb.from('quran_muraajaah_progress').select('*').eq('couple_id',coupleId).order('quran_date',{ascending:false}).limit(800);
     if(r.error)return;
-    const rows=r.data||[];
-    const partnerRows=rows.filter(x=>x.user_id===s.partner?.id);
-    const key=JSON.stringify(partnerRows.map(x=>[x.user_id,x.pages_completed,x.updated_at]));
-    const changed=quranLastPartnerProgressKey!==''&&key!==quranLastPartnerProgressKey;
+    const rows=r.data||[],partnerRows=rows.filter(x=>x.user_id===s.partner?.id&&x.quran_date===todayKey()),key=JSON.stringify(partnerRows.map(x=>[x.user_id,x.pages_completed,x.updated_at])),changed=quranLastPartnerProgressKey!==''&&key!==quranLastPartnerProgressKey;
     applyRows(rows,changed);
   };
-  poll();
-  quranPollTimer=setInterval(poll,5000);
+  poll();quranPollTimer=setInterval(poll,5000);
 }
-
 let lastQueuedUserId='__unset__';
 function hideSplash(){const x=document.getElementById('splash');if(x)x.classList.add('hide')}
 function queueAuthSession(session){
