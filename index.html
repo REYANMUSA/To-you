@@ -723,6 +723,22 @@ function deen(){
 }
 async function saveQuranGoal(){const title=document.getElementById('quranTitle').value.trim();if(!title)return;const progress=+document.getElementById('quranProgress').value||0;const id=(s.quranGoals&&s.quranGoals[0]?.id)||crypto.randomUUID();const err=await cloudUpsert('quran_goals',{id,user_id:s.profile.id,title,target:'',progress});if(err)return;s.quranGoals=[{id,title,target:'',progress}];save();closeSheet();render();toast('Qur’an goal saved')}
 function quranGoal(){const q=(s.quranGoals&&s.quranGoals[0])||{title:'',progress:0};openSheet(modal('Qur’an goal',`<div class="field"><label>Goal</label><input id="quranTitle" value="${esc(q.title)}" placeholder="Read Qur’an consistently"></div><div class="field"><label>Progress: <span id="quranPv">${q.progress}</span>%</label><input id="quranProgress" type="range" min="0" max="100" value="${q.progress}" oninput="document.getElementById('quranPv').textContent=this.value"></div><button class="btn" style="width:100%" onclick="saveQuranGoal()">Save goal</button>`))}
+async function hydrateQuranUs(){
+  if(!sb||!s.auth||!s.connected||!s.partner?.coupleId)return;
+  const date=todayKey(),start=new Date();start.setDate(start.getDate()-365),monthStart=new Date(new Date().getFullYear(),new Date().getMonth(),1);
+  const [daily,progress,ayahs,restores]=await Promise.all([
+    sb.from('quran_muraajaah_daily').select('*').eq('couple_id',s.partner.coupleId).eq('quran_date',date).maybeSingle(),
+    sb.from('quran_muraajaah_progress').select('*').eq('couple_id',s.partner.coupleId).gte('quran_date',localDateKey(start)).order('quran_date',{ascending:false}),
+    sb.from('quran_ayah_notes').select('*').eq('couple_id',s.partner.coupleId).order('created_at',{ascending:false}).limit(50),
+    sb.from('quran_muraajaah_restores').select('id',{count:'exact',head:true}).eq('user_id',s.profile.id).gte('created_at',monthStart.toISOString())
+  ]);
+  if(!daily.error)s.quranUsDaily=daily.data||{couple_id:s.partner.coupleId,quran_date:date,target_pages:3};else toast('Could not load today’s Qur’an target: '+daily.error.message);
+  if(!progress.error)s.quranUsProgress=progress.data||[];else toast('Could not load Qur’an progress: '+progress.error.message);
+  if(!ayahs.error)s.quranUsAyahs=ayahs.data||[];else toast('Could not load meaningful ayahs: '+ayahs.error.message);
+  s.quranMuraajaahRestoresUsed=restores.error?0:(restores.count||0);
+  save();
+  if(s.screen==='quranTogether')render();
+}
 async function ensureQuranDaily(date=todayKey()){
   if(!sb||!s.auth||!s.connected||!s.partner?.coupleId)return false;
   const row={id:crypto.randomUUID(),couple_id:s.partner.coupleId,quran_date:date,target_pages:3},r=await sb.from('quran_muraajaah_daily').upsert(row,{onConflict:'couple_id,quran_date'});
