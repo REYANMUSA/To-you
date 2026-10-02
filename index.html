@@ -226,8 +226,13 @@ function queueAuthSession(session){
   if(uid===lastQueuedUserId)return authQueue;
   lastQueuedUserId=uid;
   authQueue=authQueue.then(async()=>{
-    if(session)await hydrateUser(session.user);
-    else if(!s.demo){
+    if(session){
+      // Never let remote hydration hold the opening screen hostage.
+      s.auth=true;s.demo=false;
+      render();
+      const hydration=hydrateUser(session.user);
+      await Promise.race([hydration,new Promise(resolve=>setTimeout(resolve,5000))]);
+    }else if(!s.demo){
       KEY=BASE_KEY;
       s=clone(fresh);
     }
