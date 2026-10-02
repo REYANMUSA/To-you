@@ -561,7 +561,7 @@ async function hadith(){
     '<div class="grid2"><button class="btn secondary" onclick="'+practice+'">Practice</button><button class="btn" onclick="'+action+'">Learned ✓</button></div>'
   ));
 }
-async async function challenge(){
+async function challenge(){
   let q=null;
   if(sb&&s.auth){const r=await sb.from('deen_challenges').select('*').eq('active',true).limit(1).maybeSingle();q=r.data}
   const question=q?.question||'A person gives charity sincerely for Allah, while another does it only so people praise him. What is the key difference?';
