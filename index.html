@@ -561,7 +561,7 @@ async function hadith(){
     '<div class="grid2"><button class="btn secondary" onclick="'+practice+'">Practice</button><button class="btn" onclick="'+action+'">Learned ✓</button></div>'
   ));
 }
-async function challenge(){
+async async function challenge(){
   let q=null;
   if(sb&&s.auth){const r=await sb.from('deen_challenges').select('*').eq('active',true).limit(1).maybeSingle();q=r.data}
   const question=q?.question||'A person gives charity sincerely for Allah, while another does it only so people praise him. What is the key difference?';
@@ -1007,7 +1007,7 @@ function hadithTogetherPage(){
   const courseMap=next.length?next.map(function(h){const x=hadithExcerpt(h,145);return '<button class="item" style="width:100%;text-align:left;cursor:pointer;margin-top:8px" onclick="hadithPractice(\''+h.id+'\')"><div class="row"><strong>Day '+h.course_day+'</strong><span class="pill">'+(learned.has(h.id)?'✓':'Next')+'</span></div><div class="muted tiny" style="margin-top:4px">Narrated by '+esc(x.narrator)+'</div><div style="margin-top:4px">'+esc(x.body)+'</div></button>'}).join(''):'<div class="empty">You have reached the end of the loaded course.</div>';
   return '<main class="page"><button class="back" onclick="go(\'deenTogether\')">‹ Deen Together</button><div class="row"><div><h1 style="margin-bottom:3px">365 Hadith</h1><div class="muted">One lesson at a time · only Sahih al-Bukhari & Sahih Muslim</div></div><span class="pill">'+learned.size+'/365</span></div><div class="progress" style="margin:12px 0 10px"><i style="width:'+pct+'%"></i></div><div class="muted small">'+pct+'% completed · memorize the meaning, not the chain.</div>'+todayCard+'<section class="card"><div class="row"><div><strong>Next in your path</strong><div class="muted">Seven small lessons, then keep moving.</div></div><span class="pill">7</span></div>'+courseMap+'</section></main>';
 }
-function challenge(){
+async function challenge(){
   let q=null;
   if(sb&&s.auth){const r=await sb.from('deen_challenges').select('*').eq('active',true).limit(1).maybeSingle();q=r.data}
   const question=q?.question||'A person gives charity sincerely for Allah, while another does it only so people praise him. What is the key difference?';
