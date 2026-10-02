@@ -373,3 +373,47 @@ create policy to_you_push_config_deny
   for all to anon, authenticated
   using (false)
   with check (false);
+
+-- Suggestions between connected partners. Suggestions are intentionally one-way prompts, not a chat thread.
+create table if not exists public.relationship_suggestions (
+  id uuid primary key default gen_random_uuid(),
+  couple_id uuid not null references public.couples(id) on delete cascade,
+  sender_id uuid not null references auth.users(id) on delete cascade,
+  recipient_id uuid not null references auth.users(id) on delete cascade,
+  category text not null default 'growth',
+  title text not null,
+  reason text not null default '',
+  status text not null default 'open' check(status in ('open','done','dismissed')),
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  check(sender_id <> recipient_id)
+);
+alter table public.relationship_suggestions enable row level security;
+grant select, insert, update, delete on public.relationship_suggestions to authenticated;
+drop policy if exists relationship_suggestions_select on public.relationship_suggestions;
+create policy relationship_suggestions_select on public.relationship_suggestions
+for select to authenticated
+using (private.is_couple_member(couple_id) and (sender_id=(select auth.uid()) or recipient_id=(select auth.uid())));
+drop policy if exists relationship_suggestions_insert on public.relationship_suggestions;
+create policy relationship_suggestions_insert on public.relationship_suggestions
+for insert to authenticated
+with check (
+  private.is_couple_member(couple_id)
+  and sender_id=(select auth.uid())
+  and exists (
+    select 1 from public.couple_members cm
+    where cm.couple_id=relationship_suggestions.couple_id
+      and cm.user_id=relationship_suggestions.recipient_id
+  )
+);
+drop policy if exists relationship_suggestions_update on public.relationship_suggestions;
+create policy relationship_suggestions_update on public.relationship_suggestions
+for update to authenticated
+using (private.is_couple_member(couple_id) and (sender_id=(select auth.uid()) or recipient_id=(select auth.uid())))
+with check (private.is_couple_member(couple_id) and (sender_id=(select auth.uid()) or recipient_id=(select auth.uid())));
+drop policy if exists relationship_suggestions_delete on public.relationship_suggestions;
+create policy relationship_suggestions_delete on public.relationship_suggestions
+for delete to authenticated
+using (private.is_couple_member(couple_id) and (sender_id=(select auth.uid()) or recipient_id=(select auth.uid())));
+create index if not exists relationship_suggestions_couple_created_idx
+on public.relationship_suggestions(couple_id, created_at desc);
