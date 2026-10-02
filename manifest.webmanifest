@@ -5,8 +5,8 @@
   "display":"standalone",
   "background_color":"#f7f7f4",
   "theme_color":"#f7f7f4",
-  "description":"أمانة — Becoming better, one day at a time.",
+  "description":"أمانة — Grow separately. Grow together.",
   "icons":[
-    {"src":"icon-v2.svg","sizes":"512x512","type":"image/svg+xml","purpose":"any"}
+    {"src":"logo-ammanah.webp","sizes":"512x512","type":"image/webp","purpose":"any maskable"}
   ]
 }
