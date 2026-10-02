@@ -782,7 +782,7 @@ async function restoreQuranMuraajaah(){
   const ins=await sb.from('quran_muraajaah_restores').insert({id:crypto.randomUUID(),couple_id:s.partner.coupleId,user_id:s.profile.id,restored_date:missed}).select('id').single();
   if(ins.error)return toast(ins.error.code==='23505'?'That day is already restored':'Qur’an restore failed: '+ins.error.message);
   const now=new Date().toISOString(),row={couple_id:s.partner.coupleId,quran_date:missed,user_id:s.profile.id,pages_completed:3,completed_at:now,updated_at:now};
-  const prog=await sb.from('quran_muraajaah_progress').upsert(row,{onConflict:'quran_date,user_id'});
+  const prog=await sb.from('quran_muraajaah_progress').upsert(row,{onConflict:'couple_id,quran_date,user_id'});
   if(prog.error){await sb.from('quran_muraajaah_restores').delete().eq('id',ins.data?.id);return toast('Could not save restored Qur’an progress: '+prog.error.message)}
   s.quranUsProgress=[...(s.quranUsProgress||[]).filter(x=>!(x.user_id===s.profile.id&&x.quran_date===missed)),row];
   s.quranMuraajaahRestoresUsed=(s.quranMuraajaahRestoresUsed||0)+1;save();render();toast('🔥 Qur’an streak restored • '+quranStreakRestoresLeft()+' left');
