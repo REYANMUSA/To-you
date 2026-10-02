@@ -535,27 +535,56 @@ async function challengeAnswer(id,i){
   }
   closeSheet();openSheet(modal('Answer',`<div class="pill">${correct?'Correct ✓':'Review this one'}</div><p>${correct?'That answer matches the saved challenge answer.':'Review the learned material and try to remember the principle behind it.'}</p><p class="muted">Based on the learned material.</p><button class="btn" style="width:100%" onclick="closeSheet()">Continue</button>`))
 }
-async function createCourse(){
-  const n=document.getElementById('courseName').value.trim();if(!n)return;const id=crypto.randomUUID(),coupleId=s.connected?s.partner?.coupleId:null;
-  const err=await cloudUpsert('courses',{id,user_id:s.profile.id,couple_id:coupleId,title:n,progress:0,status:'Not started'});if(err)return;
-  s.courses.unshift({id,name:n,owner:'me',progress:0,status:'Not started',coupleId});save();closeSheet();render();toast('Course added');
+function courseTargetDate(start,duration){
+  if(!start||!duration)return '';
+  const d=new Date(start+'T00:00:00');d.setDate(d.getDate()+Math.max(0,+duration-1));return localDateKey(d);
 }
-function course(){openSheet(modal('Add course',`<div class="field"><label>Course name</label><input id="courseName" placeholder="Web Development"></div><p class="muted">Track the course from 0% to 100%. It becomes Complete at 100%.</p><button class="btn" style="width:100%" onclick="createCourse()">Add course</button>`))}
-function courseStatus(progress){const p=Math.max(0,Math.min(100,+progress||0));return p===0?'Not started':p>=100?'Complete':'In progress'}
+function coursePlanLabel(c){
+  const bits=[];if(c.durationDays)bits.push(c.durationDays+' days');if(c.daysPerWeek)bits.push(c.daysPerWeek+' day'+(c.daysPerWeek===1?'':'s')+'/week');return bits.join(' · ')||'Plan not set';
+}
+function courseReviewCount(id){return (s.courseReviews||[]).filter(r=>r.courseId===id).length}
+function course(){openSheet(modal('Add course','<div class="field"><label>Course name</label><input id="courseName" placeholder="Web Development"></div><div class="grid2"><div class="field"><label>Course length (days)</label><input id="courseDuration" type="number" min="1" max="3650" placeholder="30"></div><div class="field"><label>Days per week</label><input id="courseDaysWeek" type="number" min="1" max="7" placeholder="5"></div></div><div class="field"><label>Progress: <span id="newCoursePv">0</span>%</label><input id="newCourseProgress" type="range" min="0" max="100" value="0" oninput="document.getElementById('newCoursePv').textContent=this.value"></div><div class="field"><label>Notes</label><textarea id="courseNotes" placeholder="What are you learning, useful resources, or reminders?"></textarea></div><div class="field"><label>Start date</label><input id="courseStart" type="date" value="'+todayKey()+'"></div><button class="btn" style="width:100%" onclick="createCourse()">Create course</button><button class="btn ghost" style="width:100%;margin-top:8px" onclick="closeSheet()">Cancel</button>'))}
+async function createCourse(){
+  const n=document.getElementById('courseName')?.value.trim()||'',duration=+(document.getElementById('courseDuration')?.value||0),daysWeek=+(document.getElementById('courseDaysWeek')?.value||0),progress=Math.max(0,Math.min(100,+(document.getElementById('newCourseProgress')?.value||0))),notes=document.getElementById('courseNotes')?.value.trim()||'',start=document.getElementById('courseStart')?.value||todayKey();
+  if(!n)return toast('Add a course name');if(!duration||duration<1)return toast('Add how many days the course takes');if(!daysWeek||daysWeek<1||daysWeek>7)return toast('Choose 1–7 days per week');
+  const id=crypto.randomUUID(),coupleId=s.connected?s.partner?.coupleId:null,targetDate=courseTargetDate(start,duration),status=courseStatus(progress);
+  const err=await cloudUpsert('courses',{id,user_id:s.profile.id,couple_id:coupleId,title:n,progress,status,duration_days:duration,days_per_week:daysWeek,notes,start_date:start,target_date:targetDate});if(err)return;
+  s.courses.unshift({id,name:n,owner:'me',progress,status,coupleId,durationDays:duration,daysPerWeek:daysWeek,notes,startDate:start,targetDate:targetDate});save();closeSheet();render();toast('Course added ✓');
+}
 async function saveCourseEdit(id){
-  const c=s.courses.find(x=>x.id===id);if(!c||c.owner!=='me')return toast('Only your course can be edited');
-  const progress=Math.max(0,Math.min(100,+(document.getElementById('courseProgress')?.value||0))),status=courseStatus(progress);
-  const err=await cloudUpsert('courses',{id:c.id,user_id:s.profile.id,couple_id:c.coupleId||null,title:c.name,progress,status});if(err)return;
-  Object.assign(c,{progress,status});save();closeSheet();render();toast('Course progress saved');
+  const c=s.courses.find(x=>x.id===id);if(!c||c.owner!=='me')return toast('Only your course can be managed');
+  const name=document.getElementById('editCourseName')?.value.trim()||'',duration=+(document.getElementById('editCourseDuration')?.value||0),daysWeek=+(document.getElementById('editCourseDaysWeek')?.value||0),progress=Math.max(0,Math.min(100,+(document.getElementById('courseProgress')?.value||0))),notes=document.getElementById('editCourseNotes')?.value.trim()||'',start=document.getElementById('editCourseStart')?.value||c.startDate||todayKey();
+  if(!name||!duration||duration<1||!daysWeek||daysWeek>7)return toast('Complete the course plan first');
+  const status=courseStatus(progress),targetDate=courseTargetDate(start,duration),err=await cloudUpsert('courses',{id:c.id,user_id:s.profile.id,couple_id:c.coupleId||null,title:name,progress,status,duration_days:duration,days_per_week:daysWeek,notes,start_date:start,target_date:targetDate});if(err)return;
+  Object.assign(c,{name,progress,status,durationDays:duration,daysPerWeek:daysWeek,notes,startDate:start,targetDate:targetDate});save();closeSheet();render();toast('Course updated ✓');
 }
 async function deleteCourse(id){
-  const c=s.courses.find(x=>x.id===id);if(!c||c.owner!=='me')return;if(!confirm('Delete this course?'))return;
-  const err=await cloudDelete('courses',id);if(err)return;s.courses=s.courses.filter(x=>x.id!==id);save();render();toast('Course deleted');
+  const c=s.courses.find(x=>x.id===id);if(!c||c.owner!=='me')return;if(!confirm('Delete this course and its reviews?'))return;
+  const err=await cloudDelete('courses',id);if(err)return;s.courses=s.courses.filter(x=>x.id!==id);s.courseReviews=(s.courseReviews||[]).filter(r=>r.courseId!==id);save();render();toast('Course deleted');
 }
 function editCourse(id){
   const c=s.courses.find(x=>x.id===id);if(!c)return;if(c.owner!=='me')return toast('Her course is view-only');
-  openSheet(modal('Course progress',`<div class="field"><label>Progress: <span id="coursePv">${c.progress}</span>%</label><input id="courseProgress" type="range" min="0" max="100" value="${c.progress}" oninput="document.getElementById('coursePv').textContent=this.value"><div class="pill" id="courseStatusPreview" style="margin-top:8px">${courseStatus(c.progress)}</div></div><button class="btn" style="width:100%;margin-top:12px" onclick="saveCourseEdit('${id}')">Save progress</button><button class="btn danger" style="width:100%;margin-top:8px" onclick="deleteCourse('${id}')">Delete course</button>`));
-  const r=document.getElementById('courseProgress'),p=document.getElementById('courseStatusPreview');if(r&&p)r.addEventListener('input',()=>p.textContent=courseStatus(r.value));
+  openSheet(modal('Manage course','<div class="field"><label>Course name</label><input id="editCourseName" value="'+esc(c.name||'')+'"></div><div class="grid2"><div class="field"><label>Length (days)</label><input id="editCourseDuration" type="number" min="1" max="3650" value="'+esc(c.durationDays||30)+'"></div><div class="field"><label>Days / week</label><input id="editCourseDaysWeek" type="number" min="1" max="7" value="'+esc(c.daysPerWeek||5)+'"></div></div><div class="field"><label>Progress: <span id="coursePv">'+esc(c.progress||0)+'</span>%</label><input id="courseProgress" type="range" min="0" max="100" value="'+esc(c.progress||0)+'" oninput="document.getElementById(\'coursePv\').textContent=this.value"></div><div class="field"><label>Notes</label><textarea id="editCourseNotes">'+esc(c.notes||'')+'</textarea></div><div class="field"><label>Start date</label><input id="editCourseStart" type="date" value="'+esc(c.startDate||todayKey())+'"></div><button class="btn" style="width:100%" onclick="saveCourseEdit(\''+id+'\')">Save changes</button><button class="btn danger" style="width:100%;margin-top:8px" onclick="deleteCourse(\''+id+'\')">Delete course</button><button class="btn ghost" style="width:100%;margin-top:8px" onclick="closeSheet()">Cancel</button>'));
+}
+function addCourseReview(id){
+  const c=s.courses.find(x=>x.id===id);if(!c)return;if(c.owner!=='me')return toast('Her course is view-only');
+  openSheet(modal('Course review','<p class="muted">Log what you reviewed today. The review stays attached to this course.</p><div class="field"><label>Review date</label><input id="courseReviewDate" type="date" value="'+todayKey()+'"></div><div class="field"><label>What did you review?</label><textarea id="courseReviewNote" placeholder="What did you learn, practice, or understand better?"></textarea></div><button class="btn" style="width:100%" onclick="saveCourseReview(\''+id+'\')">Save review</button><button class="btn ghost" style="width:100%;margin-top:8px" onclick="closeSheet()">Cancel</button>'));
+}
+async function saveCourseReview(courseId){
+  const c=s.courses.find(x=>x.id===courseId);if(!c||c.owner!=='me')return;
+  const date=document.getElementById('courseReviewDate')?.value||todayKey(),note=document.getElementById('courseReviewNote')?.value.trim()||'',id=crypto.randomUUID(),err=await cloudUpsert('course_reviews',{id,course_id:courseId,user_id:s.profile.id,review_date:date,note});if(err)return;
+  s.courseReviews=[{id,courseId,userId:s.profile.id,date,note,createdAt:new Date().toISOString()},...(s.courseReviews||[])];save();closeSheet();render();toast('Review saved ✓');
+}
+function courseDetail(id){
+  const c=s.courses.find(x=>x.id===id);if(!c)return '<main class="page"><button class="back" onclick="go(\'courses\')">‹ Courses</button><div class="empty">Course not found.</div></main>';
+  const reviews=(s.courseReviews||[]).filter(r=>r.courseId===id).sort((a,b)=>String(b.date).localeCompare(String(a.date))),recent=reviews.slice(0,8);
+  const reviewList=recent.length?recent.map(r=>'<div class="reviewRow"><div class="row"><strong>'+esc(r.date)+'</strong><span class="pill">'+(r.userId===s.profile.id?'You':esc(s.partner?.name||'Her'))+'</span></div><div class="muted" style="margin-top:6px">'+esc(r.note||'Review logged.')+'</div></div>').join(''):'<div class="empty">No reviews logged yet.</div>';
+  return '<main class="page"><button class="back" onclick="go(\'courses\')">‹ Courses</button><section class="card"><div class="row"><div><div class="eyebrow">'+(c.owner==='me'?'YOUR COURSE':'HER COURSE')+'</div><h1 style="margin:0">'+esc(c.name)+'</h1></div><span class="pill">'+Math.round(c.progress||0)+'%</span></div><div class="progress" style="margin-top:14px"><i style="width:'+Math.max(0,Math.min(100,c.progress||0))+'%"></i></div><div class="courseMeta"><span>'+esc(coursePlanLabel(c))+'</span><span>'+esc(c.status||courseStatus(c.progress))+'</span></div>'+(c.startDate?'<div class="muted small">Started '+esc(c.startDate)+(c.targetDate?' · Target '+esc(c.targetDate):'')+'</div>':'')+(c.notes?'<div class="courseNotes"><strong>Notes</strong><div class="muted" style="margin-top:5px">'+esc(c.notes)+'</div></div>':'<div class="courseNotes muted">No course notes yet.</div>')+'<div class="grid2" style="margin-top:14px"><span class="pill" style="display:flex;align-items:center;justify-content:center">Individual course</span><button class="btn secondary" onclick="addCourseReview(\''+id+'\')">Review</button></div>'+(c.owner==='me'?'<button class="btn" style="width:100%;margin-top:8px" onclick="editCourse(\''+id+'\')">Manage course</button>':'')+'</section><section class="card"><div class="row"><div><strong>Review history</strong><div class="muted">'+recent.length+' shown · '+reviews.length+' total</div></div></div>'+reviewList+'</section></main>';
+}
+function courses(){
+  const mine=s.courses.filter(c=>c.owner==='me'),hers=s.courses.filter(c=>c.owner!=='me'),avg=mine.length?Math.round(mine.reduce((a,c)=>a+(+c.progress||0),0)/mine.length):0;
+  const renderCourse=c=>'<section class="card" onclick="courseDetail(\''+c.id+'\')"><div class="row"><div><div class="eyebrow">'+(c.owner==='me'?'YOUR COURSE':'HER COURSE')+'</div><strong>'+esc(c.name)+'</strong><div class="muted">'+esc(coursePlanLabel(c))+' · '+esc(c.status||courseStatus(c.progress))+'</div></div><span>'+Math.round(c.progress||0)+'%</span></div><div class="progress" style="margin-top:10px"><i style="width:'+Math.max(0,Math.min(100,c.progress||0))+'%"></i></div><div class="row" style="margin-top:10px"><span class="pill">'+courseReviewCount(c.id)+' review'+(courseReviewCount(c.id)===1?'':'s')+'</span><span class="muted small">'+(c.owner==='me'?'Manage inside':'View only')+'</span></div></section>';
+  return '<main class="page"><button class="back" onclick="go(\'us\')">‹ Us</button><div class="row"><div><h1 style="margin-bottom:3px">Courses</h1><div class="muted">'+mine.length+' mine · '+hers.length+' hers · '+avg+'% mine average</div></div><button class="btn secondary" onclick="course()">+ Add</button></div>'+(mine.length?mine.map(renderCourse).join(''):'<section class="card empty">No courses yet. Add one and build a plan.</section>')+(hers.length?'<h3 class="sectionTitle">Her Courses</h3>'+hers.map(renderCourse).join(''):'')+'</main>';
 }
 function journey(){go('journey')}
 async function deleteJourneyEvent(id){
