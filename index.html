@@ -1135,7 +1135,6 @@ async function saveJourneyEdit(id){
   const err=await cloudUpsert('journey_events',{id,owner_user_id:j.ownerUserId||s.profile.id,created_by:j.createdBy||s.profile.id,couple_id:s.partner?.coupleId||null,title,event_date:date,time_position:type,description:desc});if(err)return;
   Object.assign(j,{title,date,type,desc});save();closeSheet();render();toast('Journey memory updated ✓');
 }
-let journeyHoldTimer=null,journeyHoldTriggered=false;
 function startJourneyHold(e,id){
   if(e.pointerType==='mouse'&&e.button!==0)return;
   journeyHoldTriggered=false;clearJourneyHold();journeyHoldTimer=setTimeout(function(){journeyHoldTriggered=true;openJourneyActions(id)},550);
@@ -1150,7 +1149,6 @@ function editJourneyEvent(id){
   const j=s.journey.find(x=>x.id===id);if(!j)return;
   openSheet(modal('Edit journey memory','<div class="field"><label>What happened?</label><input id="editJTitle" value="'+esc(j.title||'')+'"></div><div class="field"><label>Date</label><input id="editJDate" type="date" value="'+esc(j.date||todayKey())+'"></div><div class="field"><label>Time position</label><select id="editJType"><option value="past" '+(j.type==='past'?'selected':'')+'>Past</option><option value="present" '+(j.type==='present'?'selected':'')+'>Present</option><option value="future" '+(j.type==='future'?'selected':'')+'>Future</option></select></div><div class="field"><label>Description</label><textarea id="editJDesc">'+esc(j.desc||'')+'</textarea></div><button class="btn" style="width:100%" onclick="saveJourneyEdit(\''+id+'\')">Save changes</button><button class="btn danger" style="width:100%;margin-top:8px" onclick="deleteJourneyEvent(\''+id+'\');closeSheet()">Delete</button><button class="btn ghost" style="width:100%;margin-top:8px" onclick="closeSheet()">Cancel</button>'));
 }
-let journeyPhotoData='';
 async function journeyPhoto(input){const file=input.files&&input.files[0];if(!file)return;try{const bmp=await createImageBitmap(file),max=1400,scale=Math.min(1,max/bmp.width,max/bmp.height),c=document.createElement('canvas');c.width=Math.max(1,Math.round(bmp.width*scale));c.height=Math.max(1,Math.round(bmp.height*scale));c.getContext('2d').drawImage(bmp,0,0,c.width,c.height);journeyPhotoData=c.toDataURL('image/jpeg',.78);const p=document.getElementById('journeyPreview');if(p){p.src=journeyPhotoData;p.classList.remove('hidden')}}catch(e){toast('Could not read that photo')}}
 async function addJourneyEvent(){
   const t=document.getElementById('jTitle').value.trim();if(!t)return toast('Add a title');
@@ -1174,7 +1172,6 @@ function milestoneNextDate(date,repeatYearly){
   let next=new Date(now.getFullYear(),base.getMonth(),base.getDate());if(next<new Date(now.getFullYear(),now.getMonth(),now.getDate()))next.setFullYear(next.getFullYear()+1);return next;
 }
 function milestoneDaysAway(date,repeatYearly){const next=milestoneNextDate(date,repeatYearly),today=new Date();today.setHours(0,0,0,0);return Math.round((next-today)/86400000)}
-let milestoneHoldTimer=null;
 function startMilestoneHold(e,id){if(e.pointerType==='mouse'&&e.button!==0)return;clearMilestoneHold();milestoneHoldTimer=setTimeout(function(){openMilestoneActions(id)},550)}
 function clearMilestoneHold(){if(milestoneHoldTimer){clearTimeout(milestoneHoldTimer);milestoneHoldTimer=null}}
 function openMilestoneActions(id){
@@ -1333,7 +1330,6 @@ function openQuranStreak(userId){
   openSheet(modal('Qur’an streak',body));
 }
 function openQuranTogether(){s.screen='quranTogether';save();render();ensureQuranDaily().then(()=>hydrateQuranUs())}
-let ayahHoldTimer=null,ayahHoldTriggered=false;
 function startAyahHold(e,id){if(e.pointerType==='mouse'&&e.button!==0)return;ayahHoldTriggered=false;clearAyahHold();ayahHoldTimer=setTimeout(function(){ayahHoldTriggered=true;openAyahActions(id)},550)}
 function clearAyahHold(){if(ayahHoldTimer){clearTimeout(ayahHoldTimer);ayahHoldTimer=null}}
 function openAyahActions(id){
