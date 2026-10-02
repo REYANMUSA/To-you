@@ -81,26 +81,30 @@ function bestStreakFor(id){
 }
 function streakMilestone(n){if(n>=365)return 'Legendary';if(n>=180)return 'Unstoppable';if(n>=100)return 'Century';if(n>=60)return 'Diamond';if(n>=30)return 'Gold';if(n>=14)return 'Strong';if(n>=7)return 'On fire';return 'Building'}
 function streakRestoresLeft(){return Math.max(0,3-(s.streakRestoresUsed||0))}
-function streakDayStrip(bag,days=7){
-  let out='<div class="streakDays">';
-  for(let i=days-1;i>=0;i--){let d=new Date();d.setDate(d.getDate()-i);let k=localDateKey(d),done=!!bag[k];out+='<div class="streakDay '+(done?'done':'')+'"><span>'+d.toLocaleDateString(undefined,{weekday:'short'}).slice(0,1)+'</span><i></i></div>'}
-  return out+'</div>';
+function streakRestoreCandidate(id){
+  const bag=s.habitCompletions[id]||{},d=new Date();
+  d.setDate(d.getDate()-1);
+  const missed=localDateKey(d);
+  if(bag[missed])return null;
+  d.setDate(d.getDate()-1);
+  const before=localDateKey(d);
+  if(!bag[before])return null;
+  return {date:missed};
 }
 async function restoreStreak(id){
   if(!sb||!s.auth)return toast('Sign in to use streak recovery');
   if(streakRestoresLeft()<=0)return toast('No restores left this month');
-  const bag=s.habitCompletions[id]||{},d=new Date();d.setDate(d.getDate()-1),missed=localDateKey(d);
-  if(bag[missed])return toast('Your streak is already safe');
-  const restore=await sb.from('streak_restores').insert({user_id:s.profile.id,habit_id:id,restored_date:missed}).select('id').single();
-  if(restore.error)return toast(restore.error.code==='23505'?'That day is already restored':'Restore failed: '+restore.error.message);
-  const complete=await sb.from('habit_completions').upsert({habit_id:id,owner_user_id:s.profile.id,completed_on:missed},{onConflict:'habit_id,completed_on'});
+  const candidate=streakRestoreCandidate(id);
+  if(!candidate)return toast('No recent broken streak to restore');
+  const restore=await sb.from('streak_restores').insert({user_id:s.profile.id,habit_id:id,restored_date:candidate.date}).select('id').single();
+  if(restore.error)return toast(restore.error.code==='23505'?'That missed day is already restored':'Restore failed: '+restore.error.message);
+  const complete=await sb.from('habit_completions').upsert({habit_id:id,owner_user_id:s.profile.id,completed_on:candidate.date},{onConflict:'habit_id,completed_on'});
   if(complete.error){if(restore.data?.id)await sb.from('streak_restores').delete().eq('id',restore.data.id);return toast('Could not save the restored day: '+complete.error.message)}
-  bag[missed]=true;s.habitCompletions[id]=bag;s.streakRestoresUsed=(s.streakRestoresUsed||0)+1;save();render();toast('🔥 Streak recovered • '+streakRestoresLeft()+' restore'+(streakRestoresLeft()===1?'':'s')+' left');
+  const bag=s.habitCompletions[id]||{};bag[candidate.date]=true;s.habitCompletions[id]=bag;s.streakRestoresUsed=(s.streakRestoresUsed||0)+1;save();render();toast('🔥 Streak restored • '+streakRestoresLeft()+' left');
 }
 function openStreak(id){
-  const habit=s.habits.find(x=>x.id===id),n=streakFor(id),best=bestStreakFor(id),bag=s.habitCompletions[id]||{},restores=streakRestoresLeft(),y=new Date();y.setDate(y.getDate()-1);
-  const canRestore=!bag[localDateKey(y)]&&restores>0;
-  const body='<div class="streakHero"><div><div class="eyebrow">CURRENT STREAK</div><div class="heroStreak"><span class="streakFire active">🔥</span> '+n+' day'+(n===1?'':'s')+'</div><div class="muted">'+esc(habit?.name||'Habit')+'</div></div><div class="streakHeroIcon">🔥</div></div><div class="streakStats"><div><strong>'+best+'</strong><span>Best</span></div><div><strong>'+restores+'</strong><span>Restores</span></div><div><strong>'+streakMilestone(n)+'</strong><span>Level</span></div></div>'+streakDayStrip(bag,7)+(canRestore?'<button class="btn" style="width:100%;margin-top:14px" onclick="restoreStreak(\''+id+'\')">Restore yesterday</button>':'<button class="btn secondary" style="width:100%;margin-top:14px" disabled>'+(restores?'No missed day to restore':'No restores left this month')+'</button>')+'<p class="muted small center" style="margin-top:10px">3 restores are available each calendar month.</p>';
+  const habit=s.habits.find(x=>x.id===id),n=streakFor(id),best=bestStreakFor(id),bag=s.habitCompletions[id]||{},restores=streakRestoresLeft(),candidate=streakRestoreCandidate(id);
+  const body='<div class="streakHero"><div><div class="eyebrow">CURRENT STREAK</div><div class="heroStreak"><span class="streakFire active">🔥</span> '+n+' day'+(n===1?'':'s')+'</div><div class="muted">'+esc(habit?.name||'Habit')+'</div></div><div class="streakHeroIcon">🔥</div></div><div class="streakStats"><div><strong>'+best+'</strong><span>Best</span></div><div><strong>'+restores+'</strong><span>Restores</span></div><div><strong>'+streakMilestone(n)+'</strong><span>Level</span></div></div>'+streakDayStrip(bag,7)+(candidate&&restores?'<button class="btn" style="width:100%;margin-top:14px" onclick="restoreStreak(\''+id+'\')">Restore yesterday</button>':'<button class="btn secondary" style="width:100%;margin-top:14px" disabled>'+(restores?'No recent break to restore':'No restores left this month')+'</button>')+'<p class="muted small center" style="margin-top:10px">3 restores are available each calendar month.</p>';
   openSheet(modal('Streak',body));
 }
 
@@ -714,8 +718,13 @@ function progress(){
   const goalAvg=s.goals.length?Math.round(s.goals.reduce((a,g)=>a+(+g.progress||0),0)/s.goals.length):0;
   let days=[],start=new Date(now.getFullYear(),now.getMonth(),1).getDay(),total=new Date(now.getFullYear(),now.getMonth()+1,0).getDate();for(let i=0;i<start;i++)days.push('<div></div>');
   for(let d=1;d<=total;d++){let date=new Date(now.getFullYear(),now.getMonth(),d),key=localDateKey(date),active=s.habits.some(h=>doneOn('habit',h.id,key))||s.tasks.some(t=>doneOn('task',t.id,key));days.push('<div class="calDay '+(d===now.getDate()?'today':'')+'"><strong>'+d+'</strong>'+(active?'<div class="dot"></div>':'')+'</div>')}
+  const streakRows=(s.habits||[]).map(function(h){
+    const n=streakFor(h.id),best=bestStreakFor(h.id),candidate=streakRestoreCandidate(h.id);
+    return '<section class="streakRow '+(candidate?'recentBreak':'')+'"><div class="row"><div><span class="streakNumber">🔥 '+n+'</span><div class="streakName">'+esc(h.name)+'</div><div class="streakSub">Best '+best+' · '+streakMilestone(n)+(candidate?' · recent break':'')+'</div></div><div class="streakActions">'+(candidate?'<button class="restoreBtn" onclick="restoreStreak(\''+h.id+'\')">Restore</button>':'<button class="restoreBtn" onclick="openStreak(\''+h.id+'\')">Open</button>')+'</div></div></section>';
+  }).join('')||'<div class="empty">Complete a habit today to start a streak.</div>';
+  const streakSection='<section class="card"><div class="row"><div><strong>Streaks</strong><div class="muted">Daily runs for your habits, with a recent-break restore.</div></div><span class="pill">'+streakRestoresLeft()+' restores</span></div><div class="streakGrid">'+streakRows+'</div></section>';
   const goals=s.goals.map(g=>'<button class="listBtn" style="margin-top:10px" onclick="editGoal(\''+g.id+'\')"><div class="row"><span>'+esc(g.title)+'</span><span>'+(g.progress||0)+'%</span></div><div class="progress" style="margin-top:8px"><i style="width:'+Math.max(0,Math.min(100,g.progress||0))+'%"></i></div></button>').join(''),achievements=s.achievements||[];
-  return '<main class="page"><h1>Progress</h1><section class="card"><div class="grid2"><div><div class="muted">Today</div><strong>'+todayDone+'/'+todayTotal+'</strong><div class="muted small">tasks + habits</div></div><div><div class="muted">This week</div><strong>'+weekDone+'/'+weekPossible+'</strong><div class="muted small">completions</div></div></div><div class="progress" style="margin-top:12px"><i style="width:'+pct()+'%"></i></div><div class="row" style="margin-top:8px"><span class="muted">Today completion</span><span class="pill">'+pct()+'%</span></div></section><section class="card"><div class="grid2"><div><div class="muted">Goal average</div><strong>'+goalAvg+'%</strong></div><div><div class="muted">Unlocked</div><strong>'+achievements.length+'</strong><div class="muted small">achievements</div></div></div></section><section class="card"><h2 style="margin-top:0">'+now.toLocaleString(undefined,{month:'long',year:'numeric'})+'</h2><div class="calendarGrid">'+days.join('')+'</div><div class="muted small" style="margin-top:8px">A dot means you completed at least one habit or task.</div></section><section class="card"><strong>Goals</strong>'+(goals||'<div class="empty">Create a goal to see it here.</div>')+'</section><section class="card"><strong>Daily reflection</strong><div class="muted">'+(s.reflections?.length?'Last saved on '+esc(s.reflections[0].date):'Write one to keep a record of your days.')+'</div><button class="btn secondary" style="margin-top:10px" onclick="reflect()">+ Reflection</button></section></main>';
+  return '<main class="page"><h1>Progress</h1><section class="card"><div class="grid2"><div><div class="muted">Today</div><strong>'+todayDone+'/'+todayTotal+'</strong><div class="muted small">tasks + habits</div></div><div><div class="muted">This week</div><strong>'+weekDone+'/'+weekPossible+'</strong><div class="muted small">completions</div></div></div><div class="progress" style="margin-top:12px"><i style="width:'+pct()+'%"></i></div><div class="row" style="margin-top:8px"><span class="muted">Today completion</span><span class="pill">'+pct()+'%</span></div></section><section class="card"><div class="grid2"><div><div class="muted">Goal average</div><strong>'+goalAvg+'%</strong></div><div><div class="muted">Unlocked</div><strong>'+achievements.length+'</strong><div class="muted small">achievements</div></div></div></section><section class="card"><h2 style="margin-top:0">'+now.toLocaleString(undefined,{month:'long',year:'numeric'})+'</h2><div class="calendarGrid">'+days.join('')+'</div><div class="muted small" style="margin-top:8px">A dot means you completed at least one habit or task.</div></section>'+streakSection+'<section class="card"><strong>Goals</strong>'+(goals||'<div class="empty">Create a goal to see it here.</div>')+'</section><section class="card"><strong>Daily reflection</strong><div class="muted">'+(s.reflections?.length?'Last saved on '+esc(s.reflections[0].date):'Write one to keep a record of your days.')+'</div><button class="btn secondary" style="margin-top:10px" onclick="reflect()">+ Reflection</button></section></main>';
 }
 function deen(){
   const total=s.dhikr,q=(s.quranGoals&&s.quranGoals[0])||null,h=s.dailyHadith||s.hadithCourse?.[0],hday=h?.course_day||1,learned=h?.id&&(s.hadithLearned||[]).includes(h.id);
