@@ -9,6 +9,7 @@
   "theme_color":"#f7f7f4",
   "description":"أمانة — Grow separately. Grow together.",
   "icons":[
+    {"src":"logo-ammanah.webp","sizes":"192x192","type":"image/jpeg","purpose":"any"},
     {"src":"logo-ammanah.webp","sizes":"512x512","type":"image/jpeg","purpose":"any maskable"}
   ]
 }
