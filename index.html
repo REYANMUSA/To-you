@@ -115,7 +115,7 @@ function login(){s.signup=false;s.auth=false;s.demo=false;save();render()}
 function startDemo(){s=clone(fresh);Object.assign(s,clone(demoSeed));s.demo=true;s.auth=false;s.profile={name:'Demo Me',email:'demo@toyou.app',avatar:'',provider:'demo',accent:'#718c73'};s.tour=true;save();render();toast('Demo mode started')}
 async function googleLogin(){if(!sb)return toast('Add Supabase URL + anon key first');const {error}=await sb.auth.signInWithOAuth({provider:'google',options:{redirectTo:location.origin+location.pathname}});if(error)toast(error.message)}
 async function emailAuth(){let e=document.getElementById('loginEmail').value.trim(),p=document.getElementById('loginPass').value;if(!e||p.length<6)return toast('Use a valid email and 6+ character password');if(!sb)return toast('Add Supabase URL + anon key first');let r=s.signup?await sb.auth.signUp({email:e,password:p}):await sb.auth.signInWithPassword({email:e,password:p});if(r.error)return toast(r.error.message);if(s.signup&&r.data.user&&!r.data.session)return toast('Check your email to confirm your account')}
-async function signOut(){if(quranPollTimer){clearInterval(quranPollTimer);quranPollTimer=null}if(sb)await sb.auth.signOut();KEY=BASE_KEY;s=clone(fresh);render()}
+async function signOut(){if(quranPollTimer){clearInterval(quranPollTimer);quranPollTimer=null}if(quranChannel&&sb){sb.removeChannel(quranChannel);quranChannel=null}if(usChannel&&sb){sb.removeChannel(usChannel);usChannel=null}if(usSyncTimer){clearTimeout(usSyncTimer);usSyncTimer=null}if(sb)await sb.auth.signOut();KEY=BASE_KEY;s=clone(fresh);render()}
 let authQueue=Promise.resolve();
 let needChannel=null;
 let quranPollTimer=null;
