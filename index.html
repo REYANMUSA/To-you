@@ -166,6 +166,16 @@ function startNeedRealtime(uid){
   }).subscribe();
 }
 
+function startUsLiveSync(coupleId){
+  if(usSyncTimer){clearTimeout(usSyncTimer);usSyncTimer=null}
+  if(usChannel&&sb){sb.removeChannel(usChannel);usChannel=null}
+  if(!sb||!s.auth||!coupleId)return;
+  const queue=()=>{clearTimeout(usSyncTimer);usSyncTimer=setTimeout(async()=>{await hydrateCoreData();await hydrateQuranUs()},400)};
+  usChannel=sb.channel('to-you-us-'+coupleId);
+  ['courses','course_reviews','goals','shared_goals','journey_events','journey_milestones'].forEach(table=>usChannel.on('postgres_changes',{event:'*',schema:'public',table},queue));
+  usChannel.subscribe();
+}
+
 function showQuranPartnerNotification(body){
   if(!s.settings.notifications||!('Notification' in window)||Notification.permission!=='granted')return;
   navigator.serviceWorker?.ready.then(reg=>reg.showNotification('Qur’an — Us',{body,icon:'./icon-v2.svg',badge:'./icon-v2.svg',tag:'to-you-quran'})).catch(()=>{});
@@ -268,9 +278,8 @@ async function cloudDelete(table,id){
 
 async function hydrateCoreData(){
   if(!sb||!s.auth)return;
-  const uid=s.profile.id;
-  const today=todayKey();
-  const [h,t,g,hg,j,hc,tc,sg,nr,jm,dd,pr,co,no,qo,re,hp,hd,ach]=await Promise.all([
+  const uid=s.profile.id,today=todayKey();
+  const [h,t,g,hg,j,hc,tc,sg,nr,jm,cm,dd,pr,co,cr,no,qo,re,hp,hd,ach]=await Promise.all([
     sb.from('habits').select('*').eq('user_id',uid).eq('archived',false),
     sb.from('tasks').select('*').eq('user_id',uid).eq('archived',false),
     sb.from('goals').select('*').eq('user_id',uid),
@@ -281,9 +290,11 @@ async function hydrateCoreData(){
     sb.from('shared_goals').select('*').order('created_at',{ascending:true}),
     sb.from('need_you_requests').select('id,sender_id,status,created_at').eq('recipient_id',uid).order('created_at',{ascending:false}).limit(20),
     sb.from('journey_media').select('journey_event_id,storage_path').order('created_at',{ascending:false}),
+    sb.from('journey_milestones').select('*').order('milestone_date',{ascending:true}),
     sb.from('dhikr_daily').select('*').eq('user_id',uid).eq('dhikr_date',today).maybeSingle(),
     sb.from('prayer_settings').select('*').eq('user_id',uid).maybeSingle(),
     sb.from('courses').select('*').order('created_at',{ascending:true}),
+    sb.from('course_reviews').select('*').order('review_date',{ascending:false}).limit(100),
     sb.from('notes').select('*').eq('user_id',uid).order('created_at',{ascending:false}),
     sb.from('quran_goals').select('*').eq('user_id',uid).order('created_at',{ascending:false}),
     sb.from('reflections').select('*').eq('user_id',uid).order('reflection_date',{ascending:false}).limit(100),
@@ -291,65 +302,30 @@ async function hydrateCoreData(){
     sb.from('hadiths').select('*').eq('verified',true).in('collection',['sahih_bukhari','sahih_muslim']).order('course_day',{ascending:true}),
     sb.from('achievements').select('*').eq('user_id',uid).order('unlocked_at',{ascending:false})
   ]);
-
   if(h.error)toast('Could not load habits: '+h.error.message);else s.habits=(h.data||[]).map(x=>({id:x.id,name:x.name||x.title,frequency:frequencyLabel(x.frequency),targetDays:x.target_days||[],active:x.is_active!==false}));
   if(t.error)toast('Could not load tasks: '+t.error.message);else s.tasks=(t.data||[]).map(x=>({id:x.id,title:x.title,date:x.due_date||'Today'}));
   if(g.error)toast('Could not load goals: '+g.error.message);else s.goals=(g.data||[]).map(x=>({id:x.id,title:x.title,progress:x.progress,target:x.target_date||'',desc:x.description||'',shared:x.shared_with_partner}));
-  if(hg.error)toast('Could not load shared goals: '+hg.error.message);else s.herGoals=(hg.data||[]).map(x=>({id:x.id,title:x.title,progress:x.progress,target:x.target_date||'',desc:x.description||''}));
-  if(j.error)toast('Could not load Journey: '+j.error.message);else s.journey=(j.data||[]).map(x=>({id:x.id,title:x.title,date:x.event_date,type:x.time_position,desc:x.description||'',photo:x.photo_url||''}));
-
-  s.habitCompletions={};
-  if(!hc.error)(hc.data||[]).forEach(x=>(s.habitCompletions[x.habit_id]??={})[x.completed_on]=true);else toast('Could not load habit progress: '+hc.error.message);
-  s.taskCompletions={};
-  if(!tc.error)(tc.data||[]).forEach(x=>(s.taskCompletions[x.task_id]??={})[x.completed_on]=true);else toast('Could not load task progress: '+tc.error.message);
-
-  if(sg.error)toast('Could not load shared goals: '+sg.error.message);
-  else s.sharedGoals=(sg.data||[]).map(x=>({id:x.id,title:x.title,desc:x.description||'',progress:x.progress||0,coupleId:x.couple_id,category:x.category||'future',createdBy:x.created_by}));
-
-  if(!nr.error){
-    const old=s.notifications||[];
-    s.notifications=(nr.data||[]).map(x=>({id:x.id,text:'You received an I Need You signal.',date:x.created_at,status:x.status})).concat(old.filter(x=>!x.status));
-  }else toast('Could not load signals: '+nr.error.message);
-
-  if(!jm.error&&jm.data?.length){
-    await Promise.all(jm.data.map(async m=>{
-      const signed=await sb.storage.from('journey-media').createSignedUrl(m.storage_path,60*60*24*30);
-      const row=s.journey.find(x=>x.id===m.journey_event_id);
-      if(row&&signed.data?.signedUrl)row.photo=signed.data.signedUrl;
-    }));
-  }else if(jm.error)toast('Could not load Journey photos: '+jm.error.message);
-
-  if(!dd.error&&dd.data){
-    s.dhikrCounts={
-      astaghfirullah:dd.data.astaghfirullah||0,
-      subhanallah:dd.data.subhanallah||0,
-      alhamdulillah:dd.data.alhamdulillah||0,
-      la_ilaha_illallah:dd.data.la_ilaha_illallah||0
-    };
-    s.dhikr=Object.values(s.dhikrCounts).reduce((a,b)=>a+b,0);
-    s.dhikrDate=today;
-  }else if(dd.error)toast('Could not load Dhikr: '+dd.error.message);
-
-  if(!pr.error&&pr.data){
-    s.prayer={
-      Fajr:!!pr.data.fajr_enabled,
-      Dhuhr:!!pr.data.dhuhr_enabled,
-      Asr:!!pr.data.asr_enabled,
-      Maghrib:!!pr.data.maghrib_enabled,
-      Isha:!!pr.data.isha_enabled
-    };
-  }else if(pr.error)toast('Could not load prayer reminders: '+pr.error.message);
-
-  if(!co.error)s.courses=(co.data||[]).map(x=>({id:x.id,name:x.title,owner:x.user_id===uid?'me':'her',progress:x.progress||0,status:courseStatus(x.progress||0),coupleId:x.couple_id}));else toast('Could not load courses: '+co.error.message);
+  if(hg.error)toast('Could not load Her Goals: '+hg.error.message);else s.herGoals=(hg.data||[]).map(x=>({id:x.id,title:x.title,progress:x.progress||0,target:x.target_date||'',desc:x.description||'',owner:x.user_id}));
+  if(j.error)toast('Could not load Journey: '+j.error.message);else s.journey=(j.data||[]).map(x=>({id:x.id,title:x.title,date:x.event_date,type:x.time_position,desc:x.description||'',photo:x.photo_url||'',createdBy:x.created_by,ownerUserId:x.owner_user_id}));
+  if(cm.error)toast('Could not load remembered dates: '+cm.error.message);else s.journeyMilestones=(cm.data||[]).map(x=>({id:x.id,coupleId:x.couple_id,createdBy:x.created_by,kind:x.kind,title:x.title,date:x.milestone_date,icon:x.icon||'★',repeatYearly:x.repeat_yearly!==false,targetUserId:x.target_user_id||''}));
+  s.habitCompletions={};if(!hc.error)(hc.data||[]).forEach(x=>(s.habitCompletions[x.habit_id]??={})[x.completed_on]=true);else toast('Could not load habit progress: '+hc.error.message);
+  s.taskCompletions={};if(!tc.error)(tc.data||[]).forEach(x=>(s.taskCompletions[x.task_id]??={})[x.completed_on]=true);else toast('Could not load task progress: '+tc.error.message);
+  if(sg.error)toast('Could not load shared goals: '+sg.error.message);else s.sharedGoals=(sg.data||[]).map(x=>({id:x.id,title:x.title,desc:x.description||'',progress:x.progress||0,coupleId:x.couple_id,category:x.category||'future',createdBy:x.created_by,target:x.target_date||'',completed:!!x.completed}));
+  if(!nr.error){const old=s.notifications||[];s.notifications=(nr.data||[]).map(x=>({id:x.id,text:'You received an I Need You signal.',date:x.created_at,status:x.status})).concat(old.filter(x=>!x.status))}else toast('Could not load signals: '+nr.error.message);
+  if(!jm.error&&jm.data?.length){await Promise.all(jm.data.map(async m=>{const signed=await sb.storage.from('journey-media').createSignedUrl(m.storage_path,60*60*24*30),row=s.journey.find(x=>x.id===m.journey_event_id);if(row&&signed.data?.signedUrl)row.photo=signed.data.signedUrl}))}else if(jm.error)toast('Could not load Journey photos: '+jm.error.message);
+  if(!dd.error&&dd.data){s.dhikrCounts={astaghfirullah:dd.data.astaghfirullah||0,subhanallah:dd.data.subhanallah||0,alhamdulillah:dd.data.alhamdulillah||0,la_ilaha_illallah:dd.data.la_ilaha_illallah||0};s.dhikr=Object.values(s.dhikrCounts).reduce((a,b)=>a+b,0);s.dhikrDate=today}else if(dd.error)toast('Could not load Dhikr: '+dd.error.message);
+  if(!pr.error&&pr.data)s.prayer={Fajr:!!pr.data.fajr_enabled,Dhuhr:!!pr.data.dhuhr_enabled,Asr:!!pr.data.asr_enabled,Maghrib:!!pr.data.maghrib_enabled,Isha:!!pr.data.isha_enabled};else if(pr.error)toast('Could not load prayer reminders: '+pr.error.message);
+  if(!co.error)s.courses=(co.data||[]).map(x=>({id:x.id,name:x.title,owner:x.user_id===uid?'me':'her',progress:x.progress||0,status:courseStatus(x.progress||0),coupleId:x.couple_id,durationDays:x.duration_days||null,daysPerWeek:x.days_per_week||null,notes:x.notes||'',startDate:x.start_date||'',targetDate:x.target_date||''}));else toast('Could not load courses: '+co.error.message);
+  if(!cr.error)s.courseReviews=(cr.data||[]).map(x=>({id:x.id,courseId:x.course_id,userId:x.user_id,date:x.review_date,note:x.note||'',createdAt:x.created_at}));else toast('Could not load course reviews: '+cr.error.message);
   if(!no.error)s.notes=(no.data||[]).map(x=>({id:x.id,title:x.title,body:x.body,date:x.created_at}));else toast('Could not load notes: '+no.error.message);
   if(!qo.error)s.quranGoals=(qo.data||[]).map(x=>({id:x.id,title:x.title,target:x.target||'',progress:x.progress||0}));else toast('Could not load Qur’an goals: '+qo.error.message);
   if(!re.error)s.reflections=(re.data||[]).map(x=>{let v={};try{v=JSON.parse(x.content||'{}')}catch{}return {id:x.id,date:x.reflection_date,good:v.good||'',improve:v.improve||'',grateful:v.grateful||''}});else toast('Could not load reflections: '+re.error.message);
   if(!hp.error)s.hadithLearned=(hp.data||[]).filter(x=>x.mastered||x.first_learned_at).map(x=>x.hadith_id);else toast('Could not load Hadith progress: '+hp.error.message);
-  if(!hd.error){s.hadithCourse=hd.data||[];s.dailyHadith=s.hadithCourse.find(x=>x.course_day===hadithCourseDay())||s.hadithCourse[0]||null}else{s.hadithCourse=[];s.dailyHadith=null;}
+  if(!hd.error){s.hadithCourse=hd.data||[];s.dailyHadith=s.hadithCourse.find(x=>x.course_day===hadithCourseDay())||s.hadithCourse[0]||null}else{s.hadithCourse=[];s.dailyHadith=null}
   if(!ach.error)s.achievements=(ach.data||[]).map(x=>({id:x.id,key:x.key,title:x.title,description:x.description||'',unlockedAt:x.unlocked_at}));else toast('Could not load achievements: '+ach.error.message);
-
   save();render();
 }
+
 async function hydrateUser(user){
   s=switchUserStorage(user.id);
   let {data:p,error}=await sb.from('profiles').select('*').eq('id',user.id).maybeSingle();
@@ -396,12 +372,12 @@ async function refreshPartner(){
     const p=data[0];
     s.partner={id:p.partner_id,coupleId:p.couple_id,name:p.partner_name||'Her',avatar:p.partner_avatar||'',email:'',provider:''};
     s.connected=true;
-    startQuranLiveSync(p.couple_id);
+    startQuranLiveSync(p.couple_id);startUsLiveSync(p.couple_id);
   }else{
     s.partner=null;
     s.connected=false;
     if(quranPollTimer){clearInterval(quranPollTimer);quranPollTimer=null}
-    quranLastPartnerProgressKey='';
+    quranLastPartnerProgressKey='';if(usChannel&&sb){sb.removeChannel(usChannel);usChannel=null}if(usSyncTimer){clearTimeout(usSyncTimer);usSyncTimer=null}
   }
   save();render();
   return s.connected;
