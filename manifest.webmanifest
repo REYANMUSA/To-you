@@ -1,1 +1,12 @@
-{"name":"أمانة","short_name":"أمانة","start_url":"./","display":"standalone","background_color":"#f7f7f4","theme_color":"#718c73","description":"أمانة — Becoming better, one day at a time.","icons":[{"src":"./logo-ammanah.webp","sizes":"192x192","type":"image/webp","purpose":"any"},{"src":"./logo-ammanah.webp","sizes":"512x512","type":"image/webp","purpose":"any"},{"src":"./icon-v2.svg","sizes":"any","type":"image/svg+xml","purpose":"any"}]}
+{
+  "name":"أمانة",
+  "short_name":"أمانة",
+  "start_url":"./",
+  "display":"standalone",
+  "background_color":"#f7f7f4",
+  "theme_color":"#718c73",
+  "description":"أمانة — Becoming better, one day at a time.",
+  "icons":[
+    {"src":"logo-ammanah.webp","sizes":"512x512","type":"image/webp","purpose":"any maskable"}
+  ]
+}
