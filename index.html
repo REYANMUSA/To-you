@@ -991,7 +991,7 @@ function openSuggestions(){
   const target=esc(suggestionTargetLabel());
   const sentCards=mine.length?mine.map(suggestionCard).join(''):'<div class="empty">No suggestions sent yet.</div>';
   const receivedCards=received.length?received.map(suggestionCard).join(''):'<div class="empty">No suggestions for you yet.</div>';
-  openSheet(modal('Suggestions','<p class="muted">Suggestions only — no chat thread, no pressure.</p><button class="btn" style="width:100%" '+(s.connected?'':'disabled')+' onclick="'+(s.connected?'openNewSuggestion()':"toast('Connect first')")+'">'+(s.connected?esc('💡 '+suggestionFromMeLabel()):'Connect first')+'</button><h3 class="sectionTitle">For '+target+'</h3>'+sentCards+'<h3 class="sectionTitle">Suggested to you</h3>'+receivedCards));
+  openSheet(modal('Suggestions','<p class="muted">Suggestions only — no chat thread, no pressure.</p><button class="btn" style="width:100%" '+(s.connected?'':'disabled')+' onclick="'+(s.connected?'closeSheet();openNewSuggestion()':"toast('Connect first')")+'">'+(s.connected?esc('💡 '+suggestionFromMeLabel()):'Connect first')+'</button><h3 class="sectionTitle">For '+target+'</h3>'+sentCards+'<h3 class="sectionTitle">Suggested to you</h3>'+receivedCards));
 }
 function suggestionCard(x){
   const mine=x.senderId===s.profile.id,who=mine?('To '+(s.partner?.name||'her')):('From '+(s.partner?.name||'him')),status=x.status||'open';
