@@ -245,7 +245,7 @@ function queueAuthSession(session){
 function initAuth(){
   if(!sb){authReady=true;render();hideSplash();return}
   sb.auth.onAuthStateChange((_event,session)=>{setTimeout(()=>queueAuthSession(session),0)});
-  sb.auth.getSession().then(({data})=>queueAuthSession(data.session)).catch(e=>{authReady=true;render();hideSplash();toast('Could not restore session: '+e.message)});
+  Promise.race([sb.auth.getSession(),new Promise((_,reject)=>setTimeout(()=>reject(new Error('Session restore timed out')),5000))]).then(({data})=>queueAuthSession(data.session)).catch(e=>{authReady=true;render();hideSplash();toast('Could not restore session: '+e.message)});
 }
 async function cloudUpsert(table,row,options){
   if(!sb||!s.auth)return null;
@@ -1094,7 +1094,7 @@ function page(){switch(s.screen){case'progress':return progress();case'deen':ret
 window.addEventListener('online',function(){if(s.auth)render()});
 window.addEventListener('offline',function(){if(s.auth)render()});
 render();
-setTimeout(hideSplash,6500);
+setTimeout(()=>{if(!authReady){authReady=true;render()}hideSplash()},6500);
 initAuth();
 if('serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js').catch(()=>{});
 </script></body></html>
