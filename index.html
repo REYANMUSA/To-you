@@ -588,44 +588,96 @@ function courses(){
 }
 function journey(){go('journey')}
 async function deleteJourneyEvent(id){
-  const item=s.journey.find(x=>x.id===id); if(!item)return;
+  const item=s.journey.find(x=>x.id===id);if(!item)return;
   if(!confirm('Delete this journey memory?'))return;
-  if(sb&&s.auth){
-    const {error}=await sb.from('journey_events').delete().eq('id',id);
-    if(error){toast('Could not delete the memory: '+error.message);return}
-    try{await sb.from('journey_media').delete().eq('journey_event_id',id)}catch{}
-  }
-  s.journey=s.journey.filter(x=>x.id!==id);save();render();toast('Journey memory deleted')
+  const err=await cloudDelete('journey_events',id);if(err)return;
+  try{await sb.from('journey_media').delete().eq('journey_event_id',id)}catch{}
+  s.journey=s.journey.filter(x=>x.id!==id);save();render();toast('Journey memory deleted');
+}
+async function saveJourneyEdit(id){
+  const j=s.journey.find(x=>x.id===id);if(!j)return;
+  const title=document.getElementById('editJTitle')?.value.trim()||'',date=document.getElementById('editJDate')?.value||todayKey(),type=document.getElementById('editJType')?.value||'past',desc=document.getElementById('editJDesc')?.value.trim()||'';
+  if(!title)return toast('Add a title');
+  const err=await cloudUpsert('journey_events',{id,owner_user_id:j.ownerUserId||s.profile.id,created_by:j.createdBy||s.profile.id,couple_id:s.partner?.coupleId||null,title,event_date:date,time_position:type,description:desc});if(err)return;
+  Object.assign(j,{title,date,type,desc});save();closeSheet();render();toast('Journey memory updated ✓');
+}
+let journeyHoldTimer=null,journeyHoldTriggered=false;
+function startJourneyHold(e,id){
+  if(e.pointerType==='mouse'&&e.button!==0)return;
+  journeyHoldTriggered=false;clearJourneyHold();journeyHoldTimer=setTimeout(function(){journeyHoldTriggered=true;openJourneyActions(id)},550);
+}
+function clearJourneyHold(){if(journeyHoldTimer){clearTimeout(journeyHoldTimer);journeyHoldTimer=null}}
+function toggleJourneyCard(e,id){e.preventDefault();e.stopPropagation();if(journeyHoldTriggered){journeyHoldTriggered=false;return}editJourneyEvent(id)}
+function openJourneyActions(id){
+  clearJourneyHold();const j=s.journey.find(x=>x.id===id);if(!j)return;
+  openSheet(modal('Journey memory','<div class="muted" style="margin-bottom:14px">'+esc(j.title)+'</div><button class="btn" style="width:100%" onclick="editJourneyEvent(\''+id+'\')">Edit</button><button class="btn danger" style="width:100%;margin-top:8px" onclick="deleteJourneyEvent(\''+id+'\');closeSheet()">Delete</button><button class="btn ghost" style="width:100%;margin-top:8px" onclick="closeSheet()">Cancel</button>'));
+}
+function editJourneyEvent(id){
+  const j=s.journey.find(x=>x.id===id);if(!j)return;
+  openSheet(modal('Edit journey memory','<div class="field"><label>What happened?</label><input id="editJTitle" value="'+esc(j.title||'')+'"></div><div class="field"><label>Date</label><input id="editJDate" type="date" value="'+esc(j.date||todayKey())+'"></div><div class="field"><label>Time position</label><select id="editJType"><option value="past" '+(j.type==='past'?'selected':'')+'>Past</option><option value="present" '+(j.type==='present'?'selected':'')+'>Present</option><option value="future" '+(j.type==='future'?'selected':'')+'>Future</option></select></div><div class="field"><label>Description</label><textarea id="editJDesc">'+esc(j.desc||'')+'</textarea></div><button class="btn" style="width:100%" onclick="saveJourneyEdit(\''+id+'\')">Save changes</button><button class="btn danger" style="width:100%;margin-top:8px" onclick="deleteJourneyEvent(\''+id+'\');closeSheet()">Delete</button><button class="btn ghost" style="width:100%;margin-top:8px" onclick="closeSheet()">Cancel</button>'));
 }
 let journeyPhotoData='';
-async function journeyPhoto(input){const file=input.files&&input.files[0];if(!file)return;try{const bmp=await createImageBitmap(file);const max=1400,scale=Math.min(1,max/bmp.width,max/bmp.height);const c=document.createElement('canvas');c.width=Math.max(1,Math.round(bmp.width*scale));c.height=Math.max(1,Math.round(bmp.height*scale));c.getContext('2d').drawImage(bmp,0,0,c.width,c.height);journeyPhotoData=c.toDataURL('image/jpeg',.78);const p=document.getElementById('journeyPreview');if(p){p.src=journeyPhotoData;p.classList.remove('hidden')}}catch(e){toast('Could not read that photo')}}
+async function journeyPhoto(input){const file=input.files&&input.files[0];if(!file)return;try{const bmp=await createImageBitmap(file),max=1400,scale=Math.min(1,max/bmp.width,max/bmp.height),c=document.createElement('canvas');c.width=Math.max(1,Math.round(bmp.width*scale));c.height=Math.max(1,Math.round(bmp.height*scale));c.getContext('2d').drawImage(bmp,0,0,c.width,c.height);journeyPhotoData=c.toDataURL('image/jpeg',.78);const p=document.getElementById('journeyPreview');if(p){p.src=journeyPhotoData;p.classList.remove('hidden')}}catch(e){toast('Could not read that photo')}}
 async function addJourneyEvent(){
   const t=document.getElementById('jTitle').value.trim();if(!t)return toast('Add a title');
-  const id=crypto.randomUUID(),date=document.getElementById('jDate').value||todayKey(),type=document.getElementById('jType').value,desc=document.getElementById('jDesc').value.trim(),photoData=journeyPhotoData||'';
-  const coupleId=s.connected&&s.partner?.coupleId?s.partner.coupleId:null;
-  s.journey.push({id,title:t,date,type,desc,photo:photoData});
+  const id=crypto.randomUUID(),date=document.getElementById('jDate').value||todayKey(),type=document.getElementById('jType').value,desc=document.getElementById('jDesc').value.trim(),photoData=journeyPhotoData||'',coupleId=s.connected&&s.partner?.coupleId?s.partner.coupleId:null;
+  const row={id,title:t,date,type,desc,photo:photoData,createdBy:s.profile.id,ownerUserId:s.profile.id};s.journey.push(row);
   if(sb&&s.auth){
     const err=await cloudUpsert('journey_events',{id,owner_user_id:s.profile.id,created_by:s.profile.id,couple_id:coupleId,title:t,event_date:date,time_position:type,description:desc,photo_url:null});
     if(err){s.journey=s.journey.filter(x=>x.id!==id);journeyPhotoData='';save();closeSheet();render();return}
-    if(photoData){
-      try{
-        const path=(coupleId||s.profile.id)+'/'+id+'.jpg';
-        const blob=await (await fetch(photoData)).blob();
-        const up=await sb.storage.from('journey-media').upload(path,blob,{contentType:'image/jpeg',upsert:true});
-        if(up.error)toast('Event saved, but photo upload failed');
-        else{
-          const mediaErr=await cloudUpsert('journey_media',{journey_event_id:id,owner_user_id:s.profile.id,storage_path:path});
-          if(!mediaErr){
-            const signed=await sb.storage.from('journey-media').createSignedUrl(path,60*60*24*30);
-            if(signed.data?.signedUrl)s.journey[s.journey.length-1].photo=signed.data.signedUrl;
-          }
-        }
-      }catch(e){toast('Event saved, but photo upload failed')}
-    }
+    if(photoData){try{const path=(coupleId||s.profile.id)+'/'+id+'.jpg',blob=await (await fetch(photoData)).blob(),up=await sb.storage.from('journey-media').upload(path,blob,{contentType:'image/jpeg',upsert:true});if(up.error)toast('Event saved, but photo upload failed');else{const mediaErr=await cloudUpsert('journey_media',{journey_event_id:id,owner_user_id:s.profile.id,storage_path:path});if(!mediaErr){const signed=await sb.storage.from('journey-media').createSignedUrl(path,60*60*24*30);if(signed.data?.signedUrl)row.photo=signed.data.signedUrl}}}catch(e){toast('Event saved, but photo upload failed')}}
   }
-  journeyPhotoData='';save();closeSheet();render();toast('Journey updated')
+  journeyPhotoData='';save();closeSheet();render();toast('Journey updated');
 }
-function addJourney(){journeyPhotoData='';openSheet(modal('Add journey event',`<div class="field"><label>What happened?</label><input id="jTitle" placeholder="A meaningful milestone"></div><div class="field"><label>Date</label><input id="jDate" type="date" value="${todayKey()}"></div><div class="field"><label>Time position</label><select id="jType"><option value="past">Past</option><option value="present">Present</option><option value="future">Future</option></select></div><div class="field"><label>Description</label><textarea id="jDesc" placeholder="What do you want to remember?"></textarea></div><div class="field"><label>Photo <span class="muted">(optional)</span></label><input type="file" accept="image/*" onchange="journeyPhoto(this)"><img id="journeyPreview" class="photoPreview hidden" alt="Photo preview"></div><button class="btn" style="width:100%" onclick="addJourneyEvent()">Add event</button>`))}
+function addJourney(){journeyPhotoData='';openSheet(modal('Add journey event','<div class="field"><label>What happened?</label><input id="jTitle" placeholder="A meaningful milestone"></div><div class="field"><label>Date</label><input id="jDate" type="date" value="'+todayKey()+'"></div><div class="field"><label>Time position</label><select id="jType"><option value="past">Past</option><option value="present">Present</option><option value="future">Future</option></select></div><div class="field"><label>Description</label><textarea id="jDesc" placeholder="What do you want to remember?"></textarea></div><div class="field"><label>Photo <span class="muted">(optional)</span></label><input type="file" accept="image/*" onchange="journeyPhoto(this)"><img id="journeyPreview" class="photoPreview hidden" alt="Photo preview"></div><button class="btn" style="width:100%" onclick="addJourneyEvent()">Add event</button>'))}
+function milestoneLabel(m){
+  if(m.kind==='birthday')return m.targetUserId===s.profile.id?'My Birthday':m.targetUserId===s.partner?.id?'Her Birthday':'Birthday';
+  if(m.kind==='day_we_met')return 'Day We Met';
+  return m.title||'Remembered date';
+}
+function milestoneNextDate(date,repeatYearly){
+  const base=new Date((date||todayKey())+'T00:00:00'),now=new Date();if(!repeatYearly)return base;
+  let next=new Date(now.getFullYear(),base.getMonth(),base.getDate());if(next<new Date(now.getFullYear(),now.getMonth(),now.getDate()))next.setFullYear(next.getFullYear()+1);return next;
+}
+function milestoneDaysAway(date,repeatYearly){const next=milestoneNextDate(date,repeatYearly),today=new Date();today.setHours(0,0,0,0);return Math.round((next-today)/86400000)}
+let milestoneHoldTimer=null;
+function startMilestoneHold(e,id){if(e.pointerType==='mouse'&&e.button!==0)return;clearMilestoneHold();milestoneHoldTimer=setTimeout(function(){openMilestoneActions(id)},550)}
+function clearMilestoneHold(){if(milestoneHoldTimer){clearTimeout(milestoneHoldTimer);milestoneHoldTimer=null}}
+function openMilestoneActions(id){
+  clearMilestoneHold();const m=(s.journeyMilestones||[]).find(x=>x.id===id);if(!m)return;
+  openSheet(modal('Remembered date','<div class="milestoneAction"><div class="milestoneCircle">'+esc(m.icon)+'</div><div><strong>'+esc(milestoneLabel(m))+'</strong><div class="muted">'+esc(m.date)+'</div></div></div><button class="btn" style="width:100%" onclick="editMilestone(\''+id+'\')">Edit</button><button class="btn danger" style="width:100%;margin-top:8px" onclick="deleteMilestone(\''+id+'\')">Delete</button><button class="btn ghost" style="width:100%;margin-top:8px" onclick="closeSheet()">Cancel</button>'));
+}
+function selectMilestoneKind(kind,targetId){
+  const input=document.getElementById('milestoneKind');if(input)input.value=kind;
+  const target=document.getElementById('milestoneTarget');if(target)target.value=targetId||'';
+  document.querySelectorAll('.milestoneChoice').forEach(x=>x.classList.remove('selected'));
+  const sel=document.querySelector('.milestoneChoice[data-kind="'+kind+'"][data-target="'+(targetId||'')+'"]')||document.querySelector('.milestoneChoice[data-kind="'+kind+'"]');if(sel)sel.classList.add('selected');
+  const wrap=document.getElementById('milestoneTitleWrap');if(wrap)wrap.classList.toggle('hidden',kind!=='custom');
+}
+function addMilestone(){
+  openSheet(modal('Remembered dates','<input id="milestoneKind" type="hidden" value="custom"><input id="milestoneTarget" type="hidden" value=""><div class="field"><label>What should be remembered?</label><div class="milestoneChoices"><button type="button" class="milestoneChoice" data-kind="birthday" data-target="'+s.profile.id+'" onclick="selectMilestoneKind(\'birthday\',\''+s.profile.id+'\')">🎂<span>My Birthday</span></button><button type="button" class="milestoneChoice" data-kind="birthday" data-target="'+(s.partner?.id||'')+'" onclick="selectMilestoneKind(\'birthday\',\''+(s.partner?.id||'')+'\')">🎂<span>Her Birthday</span></button><button type="button" class="milestoneChoice" data-kind="day_we_met" data-target="" onclick="selectMilestoneKind(\'day_we_met\',\'\')">🤝<span>Day We Met</span></button><button type="button" class="milestoneChoice" data-kind="custom" data-target="" onclick="selectMilestoneKind(\'custom\',\'\')">★<span>Another date</span></button></div></div><div class="field hidden" id="milestoneTitleWrap"><label>Name</label><input id="milestoneTitle" placeholder="A special day"></div><div class="field"><label>Date</label><input id="milestoneDate" type="date" value="'+todayKey()+'"></div><div class="field"><label>Icon</label><select id="milestoneIcon"><option>🎂</option><option>🤝</option><option>🌙</option><option>⭐</option><option>🌱</option><option>♥</option></select></div><div class="row"><span>Repeat every year</span><button class="toggle on" id="milestoneRepeat" onclick="this.classList.toggle(\'on\')"><i></i></button></div><button class="btn" style="width:100%;margin-top:14px" onclick="saveMilestone()">Save date</button><button class="btn ghost" style="width:100%;margin-top:8px" onclick="closeSheet()">Cancel</button>'));
+  selectMilestoneKind('custom','');
+}
+async function saveMilestone(){
+  if(!s.connected||!s.partner?.coupleId)return toast('Connect first');
+  const kind=document.getElementById('milestoneKind')?.value||'custom',targetUserId=document.getElementById('milestoneTarget')?.value||null,date=document.getElementById('milestoneDate')?.value||'',title=kind==='birthday'?(targetUserId===s.profile.id?'My Birthday':'Her Birthday'):kind==='day_we_met'?'Day We Met':(document.getElementById('milestoneTitle')?.value.trim()||'Remembered date'),icon=document.getElementById('milestoneIcon')?.value||'★',repeat=document.getElementById('milestoneRepeat')?.classList.contains('on');
+  if(!date)return toast('Choose a date');
+  const id=crypto.randomUUID(),err=await cloudUpsert('journey_milestones',{id,couple_id:s.partner.coupleId,created_by:s.profile.id,kind,target_user_id:targetUserId,title,milestone_date:date,icon,repeat_yearly:repeat});if(err)return;
+  s.journeyMilestones=[{id,coupleId:s.partner.coupleId,createdBy:s.profile.id,kind,title,date,icon,repeatYearly:repeat,targetUserId:targetUserId||''},...(s.journeyMilestones||[])];save();closeSheet();render();toast('Remembered date added ✓');
+}
+function editMilestone(id){
+  const m=(s.journeyMilestones||[]).find(x=>x.id===id);if(!m)return;
+  openSheet(modal('Edit remembered date','<div class="field"><label>Name</label><input id="editMilestoneTitle" value="'+esc(m.title||'')+'"></div><div class="field"><label>Date</label><input id="editMilestoneDate" type="date" value="'+esc(m.date||todayKey())+'"></div><div class="field"><label>Icon</label><select id="editMilestoneIcon"><option '+(m.icon==='🎂'?'selected':'')+'>🎂</option><option '+(m.icon==='🤝'?'selected':'')+'>🤝</option><option '+(m.icon==='🌙'?'selected':'')+'>🌙</option><option '+(m.icon==='⭐'?'selected':'')+'>⭐</option><option '+(m.icon==='🌱'?'selected':'')+'>🌱</option><option '+(m.icon==='♥'?'selected':'')+'>♥</option></select></div><div class="row"><span>Repeat every year</span><button class="toggle '+(m.repeatYearly?'on':'')+'" id="editMilestoneRepeat" onclick="this.classList.toggle(\'on\')"><i></i></button></div><button class="btn" style="width:100%;margin-top:14px" onclick="saveMilestoneEdit(\''+id+'\')">Save changes</button><button class="btn danger" style="width:100%;margin-top:8px" onclick="deleteMilestone(\''+id+'\')">Delete</button><button class="btn ghost" style="width:100%;margin-top:8px" onclick="closeSheet()">Cancel</button>'));
+}
+async function saveMilestoneEdit(id){
+  const m=(s.journeyMilestones||[]).find(x=>x.id===id);if(!m)return;
+  const title=document.getElementById('editMilestoneTitle')?.value.trim()||'Remembered date',date=document.getElementById('editMilestoneDate')?.value||m.date,icon=document.getElementById('editMilestoneIcon')?.value||m.icon,repeat=document.getElementById('editMilestoneRepeat')?.classList.contains('on');
+  const err=await cloudUpsert('journey_milestones',{id,couple_id:m.coupleId,created_by:m.createdBy,kind:m.kind,target_user_id:m.targetUserId||null,title,milestone_date:date,icon,repeat_yearly:repeat});if(err)return;
+  Object.assign(m,{title,date,icon,repeatYearly:repeat});save();closeSheet();render();toast('Remembered date updated ✓');
+}
+async function deleteMilestone(id){
+  const err=await cloudDelete('journey_milestones',id);if(err)return;s.journeyMilestones=(s.journeyMilestones||[]).filter(x=>x.id!==id);save();closeSheet();render();toast('Remembered date deleted');
+}
 async function need(){if(!s.connected||!s.partner?.id||!s.partner?.coupleId)return toast('Connect first');const id=crypto.randomUUID(),now=new Date().toISOString();if(sb&&s.auth){const err=await cloudUpsert('need_you_requests',{id,couple_id:s.partner.coupleId,sender_id:s.profile.id,recipient_id:s.partner.id,status:'sent',message:'I Need You'});if(err)return;const push=await sb.functions.invoke('send-push',{body:{type:'need_you',recipient_id:s.partner.id,message:'I Need You'}});if(push.error)toast('Signal saved, but push notification failed')}s.needSentAt=now;s.notifications.unshift({id,text:s.profile.name+' needs you',date:now,status:'sent'});save();render();toast('I Need You signal sent')}
 async function createNote(){
   const t=document.getElementById('noteTitle').value.trim();if(!t)return;const body=document.getElementById('noteBody').value,id=crypto.randomUUID(),err=await cloudUpsert('notes',{id,user_id:s.profile.id,title:t,body});if(err)return;s.notes.unshift({id,title:t,body,date:new Date().toISOString()});save();closeSheet();render();toast('Note saved');
