@@ -644,62 +644,62 @@ async function saveQuranGoal(){const title=document.getElementById('quranTitle')
 function quranGoal(){const q=(s.quranGoals&&s.quranGoals[0])||{title:'',progress:0};openSheet(modal('Qur’an goal',`<div class="field"><label>Goal</label><input id="quranTitle" value="${esc(q.title)}" placeholder="Read Qur’an consistently"></div><div class="field"><label>Progress: <span id="quranPv">${q.progress}</span>%</label><input id="quranProgress" type="range" min="0" max="100" value="${q.progress}" oninput="document.getElementById('quranPv').textContent=this.value"></div><button class="btn" style="width:100%" onclick="saveQuranGoal()">Save goal</button>`))}
 function openQuranTogether(){s.screen='quranTogether';save();render();hydrateQuranUs()}
 async function hydrateQuranUs(){
-  if(!sb||!s.auth||!s.connected||!s.partner?.coupleId){return}
-  const date=todayKey();
-  const [daily,progress,ayahs]=await Promise.all([
+  if(!sb||!s.auth||!s.connected||!s.partner?.coupleId)return;
+  const date=todayKey(),monthStart=new Date();monthStart.setDate(1);monthStart.setHours(0,0,0,0);
+  const [daily,progress,ayahs,restores]=await Promise.all([
     sb.from('quran_muraajaah_daily').select('*').eq('couple_id',s.partner.coupleId).eq('quran_date',date).maybeSingle(),
-    sb.from('quran_muraajaah_progress').select('*').eq('couple_id',s.partner.coupleId).eq('quran_date',date),
-    sb.from('quran_ayah_notes').select('*').eq('couple_id',s.partner.coupleId).order('created_at',{ascending:false}).limit(20)
+    sb.from('quran_muraajaah_progress').select('*').eq('couple_id',s.partner.coupleId).order('quran_date',{ascending:false}).limit(800),
+    sb.from('quran_ayah_notes').select('*').eq('couple_id',s.partner.coupleId).order('created_at',{ascending:false}).limit(50),
+    sb.from('quran_muraajaah_restores').select('id,restored_date,created_at',{count:'exact'}).eq('user_id',s.profile.id).gte('created_at',monthStart.toISOString())
   ]);
   if(daily.error)toast('Could not load Qur’an muraaja’ah: '+daily.error.message);else s.quranUsDaily=daily.data||{couple_id:s.partner.coupleId,quran_date:date,target_pages:3};
   if(progress.error)toast('Could not load Qur’an progress: '+progress.error.message);else s.quranUsProgress=progress.data||[];
   if(ayahs.error)toast('Could not load meaningful ayahs: '+ayahs.error.message);else s.quranUsAyahs=ayahs.data||[];
+  if(restores.error)toast('Could not load Qur’an restores: '+restores.error.message);else s.quranMuraajaahRestoresUsed=restores.count||0;
   save();if(s.screen==='quranTogether')render();
 }
-async function ensureQuranDaily(){
+async function ensureQuranDaily(date=todayKey()){
   if(!sb||!s.auth||!s.connected||!s.partner?.coupleId)return false;
-  const row={id:crypto.randomUUID(),couple_id:s.partner.coupleId,quran_date:todayKey(),target_pages:3};
-  const r=await sb.from('quran_muraajaah_daily').upsert(row,{onConflict:'couple_id,quran_date'});
-  if(r.error){toast('Could not create today’s Qur’an task: '+r.error.message);return false}
-  s.quranUsDaily=Object.assign({target_pages:3},s.quranUsDaily||{},row,{couple_id:s.partner.coupleId,quran_date:todayKey(),target_pages:3});
-  return true;
+  const row={id:crypto.randomUUID(),couple_id:s.partner.coupleId,quran_date:date,target_pages:3},r=await sb.from('quran_muraajaah_daily').upsert(row,{onConflict:'couple_id,quran_date'});
+  if(r.error){toast('Could not create Qur’an target: '+r.error.message);return false}
+  if(date===todayKey())s.quranUsDaily=Object.assign({target_pages:3},s.quranUsDaily||{},row,{couple_id:s.partner.coupleId,quran_date:date,target_pages:3});return true;
+}
+function quranStreakFor(userId){
+  const done=new Set((s.quranUsProgress||[]).filter(x=>x.user_id===userId&&x.pages_completed===3).map(x=>x.quran_date));let d=new Date();if(!done.has(localDateKey(d)))d.setDate(d.getDate()-1);let n=0;
+  for(let i=0;i<800;i++){const key=localDateKey(d);if(!done.has(key))break;n++;d.setDate(d.getDate()-1)}return n;
+}
+function quranBestStreakFor(userId){
+  const done=[...new Set((s.quranUsProgress||[]).filter(x=>x.user_id===userId&&x.pages_completed===3).map(x=>x.quran_date))].sort();let best=0,run=0,prev=null;
+  done.forEach(k=>{const d=new Date(k+'T00:00:00');if(prev&&Math.round((d-prev)/86400000)===1)run++;else run=1;if(run>best)best=run;prev=d});return best;
+}
+function quranStreakRestoresLeft(){return Math.max(0,3-(s.quranMuraajaahRestoresUsed||0))}
+function quranStreakDayStrip(userId){
+  const done=new Set((s.quranUsProgress||[]).filter(x=>x.user_id===userId&&x.pages_completed===3).map(x=>x.quran_date));let out='<div class="streakDays">';
+  for(let i=6;i>=0;i--){let d=new Date();d.setDate(d.getDate()-i);let k=localDateKey(d);out+='<div class="streakDay '+(done.has(k)?'done':'')+'"><span>'+d.toLocaleDateString(undefined,{weekday:'short'}).slice(0,1)+'</span><i></i></div>'}
+  return out+'</div>';
+}
+async function restoreQuranMuraajaah(){
+  if(!sb||!s.auth||!s.connected||!s.partner?.coupleId)return toast('Connect first');
+  if(quranStreakRestoresLeft()<=0)return toast('No Qur’an restores left this month');
+  const d=new Date();d.setDate(d.getDate()-1);const missed=localDateKey(d);
+  if((s.quranUsProgress||[]).some(x=>x.user_id===s.profile.id&&x.quran_date===missed&&x.pages_completed===3))return toast('Your Qur’an streak is already safe');
+  if(!await ensureQuranDaily(missed))return;
+  const ins=await sb.from('quran_muraajaah_restores').insert({id:crypto.randomUUID(),couple_id:s.partner.coupleId,user_id:s.profile.id,restored_date:missed}).select('id').single();
+  if(ins.error)return toast(ins.error.code==='23505'?'That day is already restored':'Qur’an restore failed: '+ins.error.message);
+  const now=new Date().toISOString(),prog=await sb.from('quran_muraajaah_progress').upsert({couple_id:s.partner.coupleId,quran_date:missed,user_id:s.profile.id,pages_completed:3,completed_at:now,updated_at:now},{onConflict:'couple_id,quran_date,user_id'});
+  if(prog.error){await sb.from('quran_muraajaah_restores').delete().eq('id',ins.data?.id);return toast('Could not save restored Qur’an progress: '+prog.error.message)}
+  s.quranUsProgress=[...(s.quranUsProgress||[]).filter(x=>!(x.user_id===s.profile.id&&x.quran_date===missed)),{couple_id:s.partner.coupleId,quran_date:missed,user_id:s.profile.id,pages_completed:3,completed_at:now,updated_at:now}];
+  s.quranMuraajaahRestoresUsed=(s.quranMuraajaahRestoresUsed||0)+1;save();render();toast('🔥 Qur’an streak restored • '+quranStreakRestoresLeft()+' left');
 }
 async function toggleQuranMuraajaah(){
-  if(!sb||!s.auth)return toast('Sign in to use shared Qur’an');if(!s.connected||!s.partner?.coupleId)return toast('Connect first');
-  if(!await ensureQuranDaily())return;
-  const date=todayKey(),coupleId=s.partner.coupleId;
-  // Read the authoritative row first so Undo always reflects what is actually saved for this account.
-  const current=await sb.from('quran_muraajaah_progress').select('*').eq('couple_id',coupleId).eq('quran_date',date).eq('user_id',s.profile.id).maybeSingle();
-  if(current.error){toast('Could not read your Qur’an progress: '+current.error.message);return}
-  const done=current.data?.pages_completed===3;
-  const now=new Date().toISOString();
-  const row={couple_id:coupleId,quran_date:date,user_id:s.profile.id,pages_completed:done?0:3,completed_at:done?null:now,updated_at:now};
-  let result;
-  if(current.data){
-    result=await sb.from('quran_muraajaah_progress').update({pages_completed:row.pages_completed,completed_at:row.completed_at,updated_at:row.updated_at}).eq('couple_id',coupleId).eq('quran_date',date).eq('user_id',s.profile.id);
-  }else{
-    result=await sb.from('quran_muraajaah_progress').insert(row);
-  }
-  if(result.error){toast('Could not save Qur’an progress: '+result.error.message);return}
-  const rest=(s.quranUsProgress||[]).filter(x=>!(x.user_id===s.profile.id&&x.quran_date===date));if(row.pages_completed===3)rest.push(row);s.quranUsProgress=rest;save();render();toast(row.pages_completed===3?'3 pages completed ✓':'Marked incomplete');
+  if(!sb||!s.auth)return toast('Sign in to use shared Qur’an');if(!s.connected||!s.partner?.coupleId)return toast('Connect first');if(!await ensureQuranDaily())return;
+  const date=todayKey(),coupleId=s.partner.coupleId,current=await sb.from('quran_muraajaah_progress').select('*').eq('couple_id',coupleId).eq('quran_date',date).eq('user_id',s.profile.id).maybeSingle();
+  if(current.error)return toast('Could not read your Qur’an progress: '+current.error.message);
+  const done=current.data?.pages_completed===3,now=new Date().toISOString(),row={couple_id:coupleId,quran_date:date,user_id:s.profile.id,pages_completed:done?0:3,completed_at:done?null:now,updated_at:now};
+  const result=current.data?await sb.from('quran_muraajaah_progress').update({pages_completed:row.pages_completed,completed_at:row.completed_at,updated_at:row.updated_at}).eq('couple_id',coupleId).eq('quran_date',date).eq('user_id',s.profile.id):await sb.from('quran_muraajaah_progress').insert(row);
+  if(result.error)return toast('Could not save Qur’an progress: '+result.error.message);
+  s.quranUsProgress=[...(s.quranUsProgress||[]).filter(x=>!(x.user_id===s.profile.id&&x.quran_date===date)),...(row.pages_completed===3?[row]:[])];save();render();toast(row.pages_completed===3?'3 pages completed ✓':'Marked incomplete');
 }
-function addMeaningfulAyah(){
-  if(!sb||!s.auth)return toast('Sign in to use shared Qur’an');if(!s.connected||!s.partner?.coupleId)return toast('Connect first');
-  openSheet(modal('Save a meaningful ayah',`<p class="muted">Save an ayah that meant something to you. It will be shared with her.</p><div class="field"><label>Surah</label><input id="ayahSurah" placeholder="Al-Baqarah"></div><div class="field"><label>Ayah number</label><input id="ayahNumber" type="number" min="1" placeholder="286"></div><div class="field"><label>Arabic</label><textarea id="ayahArabic" placeholder="Paste the exact Arabic ayah"></textarea></div><div class="field"><label>Translation</label><textarea id="ayahTranslation" placeholder="Paste the translation you trust"></textarea></div><div class="field"><label>Why it was meaningful <span class="muted">(optional)</span></label><textarea id="ayahNote" placeholder="A short reflection..."></textarea></div><button class="btn" style="width:100%" onclick="saveMeaningfulAyah()">Save ayah</button>`));
-}
-async function saveMeaningfulAyah(){
-  const surah=document.getElementById('ayahSurah').value.trim(),ayah=+document.getElementById('ayahNumber').value,arabic=document.getElementById('ayahArabic').value.trim(),translation=document.getElementById('ayahTranslation').value.trim(),note=document.getElementById('ayahNote').value.trim();
-  if(!surah||!ayah||!arabic||!translation)return toast('Add the reference, Arabic and translation');
-  const id=crypto.randomUUID(),row={id,couple_id:s.partner.coupleId,created_by:s.profile.id,surah,ayah,arabic,translation,note};
-  const r=await sb.from('quran_ayah_notes').insert(row);if(r.error){toast('Could not save ayah: '+r.error.message);return}
-  s.quranUsAyahs=[row,...(s.quranUsAyahs||[])];save();closeSheet();render();toast('Ayah saved for Us');
-}
-function quranTogether(){
-  const date=todayKey(),daily=s.quranUsDaily||{target_pages:3},rows=s.quranUsProgress||[],me=rows.find(x=>x.user_id===s.profile.id&&x.quran_date===date),her=rows.find(x=>x.user_id===s.partner?.id&&x.quran_date===date),meDone=me?.pages_completed===3,herDone=her?.pages_completed===3;
-  return `<main class="page"><button class="back" onclick="go('deenTogether')">‹ Deen Together</button><div class="quranUsHero"><div><h1 style="margin-bottom:3px">Qur’an</h1><div class="muted">A small shared practice, one day at a time.</div></div><div class="quranUsIcon">☪</div></div><section class="card"><div class="row"><div><strong>Today’s Muraaja’ah</strong><div class="muted">Review ${daily.target_pages||3} pages</div></div><span class="pill">${meDone?'Done':'3 pages'}</span></div><div class="quranUsPeople" style="margin-top:12px"><div class="quranUsPerson"><div class="row"><div><strong>${esc(s.profile.name||'You')}</strong><div class="muted">Your review</div></div><span class="${meDone?'quranUsDone':''}">${meDone?'✓ 3/3':'0/3'}</span></div><div class="progress" style="margin-top:9px"><i style="width:${meDone?100:0}%"></i></div></div><div class="quranUsPerson"><div class="row"><div><strong>${esc(s.partner?.name||'Her')}</strong><div class="muted">Her review</div></div><span class="${herDone?'quranUsDone':''}">${herDone?'✓ 3/3':'0/3'}</span></div><div class="progress" style="margin-top:9px"><i style="width:${herDone?100:0}%"></i></div></div></div><button class="btn ${meDone?'secondary':''}" style="width:100%;margin-top:12px" onclick="toggleQuranMuraajaah()">${meDone?'Undo today’s 3 pages':'Mark today’s 3 pages done'}</button></section><section class="card"><div class="row"><div><strong>Meaningful ayahs</strong><div class="muted">Save a verse you want both of you to remember.</div></div><button class="btn secondary" onclick="addMeaningfulAyah()">+ Add</button></div>${quranUsAyahCountPlaceholder()}</section></main>`;
-}
-function openFullAyah(id){const a=(s.quranUsAyahs||[]).find(x=>x.id===id);if(!a)return toast('Ayah not found');openSheet(modal('Full Ayah',`<div class="quranUsRef">${esc(a.surah)} · ${esc(a.ayah)}</div><p class="quranUsArabic" dir="rtl" style="font-size:25px;line-height:2.1;margin-top:14px">${esc(a.arabic)}</p><div style="font-size:16px;line-height:1.65">${esc(a.translation)}</div>${a.note?`<div class="muted quranUsNote">${esc(a.note)}</div>`:''}<div class="muted small" style="margin-top:12px">Added by ${a.created_by===s.profile.id?'you':esc(s.partner?.name||'her')}</div>`))}
-function quranUsAyahCountPlaceholder(){const ayahs=s.quranUsAyahs||[];if(!ayahs.length)return '<div class="empty">Nothing saved yet.</div>';return '<div class="stack" style="margin-top:12px">'+ayahs.map(a=>`<section class="quranUsAyah"><div class="quranUsRef">${esc(a.surah)} · ${esc(a.ayah)}</div><p class="quranUsArabic" dir="rtl">${esc(a.arabic)}</p><div>${esc(a.translation)}</div>${a.note?`<div class="muted quranUsNote">${esc(a.note)}</div>`:''}<div class="muted small" style="margin-top:10px">Added by ${a.created_by===s.profile.id?'you':esc(s.partner?.name||'her')}</div><button class="btn secondary" style="width:100%;margin-top:10px" onclick="openFullAyah('${a.id}')">Full Ayah</button></section>`).join('')+'</div>'}
 function us(){
   const connected=!!(s.connected&&s.partner),partner=connected?avatar(s.partner.name,s.partner.avatar):'<div class="avatar fallback">?</div>';
   return '<main class="page"><h1>Us</h1><section class="card people"><div class="person">'+avatar(s.profile.name,s.profile.avatar)+'<strong>'+esc(s.profile.name||'You')+'</strong><span class="muted">Me</span></div><div class="connectionLine">'+(connected?'↔':'+')+'</div><div class="person">'+partner+'<strong>'+(connected?esc(s.partner.name):'Not connected')+'</strong><span class="muted">'+(connected?'Her':'Connect when ready')+'</span></div></section>'+(connected?'':'<section class="card center"><h3>Connect your two accounts</h3><p class="muted">Your private data stays yours. Only things intentionally shared appear in Us.</p><button class="btn" onclick="connectSheet()">Connect with Her</button></section>')+'<section class="card"><div class="row"><div><strong>Grow</strong><div class="muted">My Goals · Her Goals · Our Goals</div></div><span>›</span></div><div class="grid2" style="margin-top:12px"><button class="btn secondary" onclick="go(\'grow\')">My Goals</button><button class="btn secondary" onclick="go(\'grow\')">Her Goals</button></div><button class="btn" style="width:100%;margin-top:10px" onclick="go(\'ourg\')">Our Goals</button></section><section class="card" onclick="go(\'courses\')"><div class="row"><div><strong>Courses</strong><div class="muted">Mine · Hers · progress</div></div><span>›</span></div></section><section class="card" onclick="go(\'deenTogether\')"><div class="row"><div><strong>Deen Together</strong><div class="muted">Qur’an · Hadith · Dhikr · Islamic learning</div></div><span>›</span></div></section><section class="card" onclick="go(\'future\')"><div class="row"><div><strong>Future</strong><div class="muted">Marriage · family · education · career · finances</div></div><span>›</span></div></section><section class="card" onclick="go(\'journey\')"><div class="row"><div><strong>Our Journey</strong><div class="muted">Past · Present · Future · milestones</div></div><span>›</span></div></section><section class="card center"><div class="big">🫂</div><h3>I Need You</h3><div class="muted">A quiet signal when you genuinely need her.</div><button class="btn" '+(connected?'':'disabled')+' onclick="'+(connected?'need()':"toast('Connect first')")+'">'+(connected?'I Need You':'Connect first')+'</button></section></main>';
