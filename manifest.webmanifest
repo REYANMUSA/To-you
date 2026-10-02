@@ -1,12 +1,14 @@
 {
+  "id":"./",
   "name":"أمانة",
   "short_name":"أمانة",
   "start_url":"./",
+  "scope":"./",
   "display":"standalone",
   "background_color":"#f7f7f4",
   "theme_color":"#f7f7f4",
   "description":"أمانة — Grow separately. Grow together.",
   "icons":[
-    {"src":"logo-ammanah.webp","sizes":"512x512","type":"image/webp","purpose":"any maskable"}
+    {"src":"logo-ammanah.webp","sizes":"512x512","type":"image/jpeg","purpose":"any maskable"}
   ]
 }
