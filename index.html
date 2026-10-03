@@ -26,7 +26,6 @@ body.dark{--bg:#171a17;--card:#20241f;--text:#f1f3ef;--muted:#aab1a9;--line:#343
 <body><div id="splash"><div class="splashInner"><div class="splashLogo"><img src="./icon-v2.svg" alt="أمانة"></div><div class="splashName" dir="rtl">أمانة</div></div></div><div id="app" class="app"></div>
 <script>
 const BASE_KEY='toyou_phase5_v1';
-const LAST_USER_KEY=BASE_KEY+':lastUser';
 let KEY=BASE_KEY;
 const SUPABASE_URL=window.TOYOU_SUPABASE_URL||'YOUR_SUPABASE_URL';
 const SUPABASE_ANON_KEY=window.TOYOU_SUPABASE_ANON_KEY||'YOUR_SUPABASE_ANON_KEY';
@@ -51,43 +50,6 @@ function load(){
   return out
 }
 function save(){try{localStorage.setItem(KEY,JSON.stringify(s))}catch{}}
-function outboxKey(){return (KEY||BASE_KEY)+':outbox'}
-function readOutbox(){try{const x=JSON.parse(localStorage.getItem(outboxKey())||'[]');return Array.isArray(x)?x:[]}catch{return[]}}
-function writeOutbox(items){try{localStorage.setItem(outboxKey(),JSON.stringify(items))}catch{}}
-function enqueueOutbox(item){const q=readOutbox();q.push(Object.assign({queued_at:Date.now()},item));writeOutbox(q)}
-function isNetworkError(err){
-  const m=String(err?.message||err||'');
-  return navigator.onLine===false || /Failed to fetch|NetworkError|network|offline|timeout|Load failed/i.test(m);
-}
-async function flushOutbox(){
-  if(!sb||!s.auth||navigator.onLine===false)return;
-  const q=readOutbox();if(!q.length)return;
-  for(let i=0;i<q.length;i++){
-    const item=q[i];
-    try{
-      let r;
-      if(item.op==='upsert')r=await sb.from(item.table).upsert(item.row,item.options||{});
-      else if(item.op==='delete'){
-        let query=sb.from(item.table).delete();
-        Object.entries(item.filters||{}).forEach(([k,v])=>{if(v!==undefined&&v!==null)query=query.eq(k,v)});
-        r=await query;
-      }else if(item.op==='update'){
-        let query=sb.from(item.table).update(item.values);
-        Object.entries(item.filters||{}).forEach(([k,v])=>{if(v!==undefined&&v!==null)query=query.eq(k,v)});
-        r=await query;
-      }
-      if(r?.error){
-        if(isNetworkError(r.error)){writeOutbox(q.slice(i));return}
-        toast('Offline sync error: '+r.error.message);
-        continue;
-      }
-    }catch(e){
-      if(isNetworkError(e)){writeOutbox(q.slice(i));return}
-      toast('Offline sync error: '+(e?.message||e));
-    }
-  }
-  writeOutbox([]);
-}
 function switchUserStorage(uid){
   if(!uid){KEY=BASE_KEY;return load()}
   const next=BASE_KEY+':'+uid;
@@ -97,7 +59,7 @@ function switchUserStorage(uid){
       if(legacy?.profile?.id===uid)localStorage.setItem(next,JSON.stringify(legacy));
     }catch{}
   }
-  KEY=next;try{localStorage.setItem(LAST_USER_KEY,uid)}catch{};
+  KEY=next;
   return load();
 }
 function esc(x){return String(x??'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]))}
@@ -132,20 +94,15 @@ function streakRestoreCandidate(id){
   return {date:missed};
 }
 async function restoreStreak(id){
-  const habit=s.habits.find(x=>x.id===id);if(!habit)return;
   if(!sb||!s.auth)return toast('Sign in to use streak recovery');
   if(streakRestoresLeft()<=0)return toast('No restores left this month');
-  const candidate=streakRestoreCandidate(id);if(!candidate)return toast('No recent broken streak to restore');
-  const restoreId=crypto.randomUUID(),completeRow={habit_id:id,owner_user_id:s.profile.id,completed_on:candidate.date},restoreRow={id:restoreId,user_id:s.profile.id,habit_id:id,restored_date:candidate.date};
-  if(navigator.onLine===false){
-    enqueueOutbox({op:'upsert',table:'streak_restores',row:restoreRow,options:{onConflict:'id'}});
-    enqueueOutbox({op:'upsert',table:'habit_completions',row:completeRow,options:{onConflict:'habit_id,completed_on'}});
-    (s.habitCompletions[id]??={})[candidate.date]=true;s.streakRestoresUsed=(s.streakRestoresUsed||0)+1;save();render();toast('🔥 Streak restored offline · will sync ✓');return;
-  }
-  const restore=await sb.from('streak_restores').insert(restoreRow).select('id').single();
-  if(restore.error){if(isNetworkError(restore.error)){enqueueOutbox({op:'upsert',table:'streak_restores',row:restoreRow,options:{onConflict:'id'}});enqueueOutbox({op:'upsert',table:'habit_completions',row:completeRow,options:{onConflict:'habit_id,completed_on'}});(s.habitCompletions[id]??={})[candidate.date]=true;s.streakRestoresUsed=(s.streakRestoresUsed||0)+1;save();render();toast('🔥 Streak restored offline · will sync ✓');return}return toast(restore.error.code==='23505'?'That missed day is already restored':'Restore failed: '+restore.error.message)}
-  const complete=await cloudUpsert('habit_completions',completeRow,{onConflict:'habit_id,completed_on'});if(complete)return;
-  (s.habitCompletions[id]??={})[candidate.date]=true;s.streakRestoresUsed=(s.streakRestoresUsed||0)+1;save();render();toast('🔥 Streak restored • '+streakRestoresLeft()+' left');
+  const candidate=streakRestoreCandidate(id);
+  if(!candidate)return toast('No recent broken streak to restore');
+  const restore=await sb.from('streak_restores').insert({user_id:s.profile.id,habit_id:id,restored_date:candidate.date}).select('id').single();
+  if(restore.error)return toast(restore.error.code==='23505'?'That missed day is already restored':'Restore failed: '+restore.error.message);
+  const complete=await sb.from('habit_completions').upsert({habit_id:id,owner_user_id:s.profile.id,completed_on:candidate.date},{onConflict:'habit_id,completed_on'});
+  if(complete.error){if(restore.data?.id)await sb.from('streak_restores').delete().eq('id',restore.data.id);return toast('Could not save the restored day: '+complete.error.message)}
+  const bag=s.habitCompletions[id]||{};bag[candidate.date]=true;s.habitCompletions[id]=bag;s.streakRestoresUsed=(s.streakRestoresUsed||0)+1;save();render();toast('🔥 Streak restored • '+streakRestoresLeft()+' left');
 }
 function openStreak(id){
   const habit=s.habits.find(x=>x.id===id),n=streakFor(id),best=bestStreakFor(id),bag=s.habitCompletions[id]||{},restores=streakRestoresLeft(),candidate=streakRestoreCandidate(id);
@@ -158,13 +115,13 @@ function pct(){let all=s.habits.length+s.tasks.length,done=s.habits.filter(x=>do
 function openSheet(html){document.body.insertAdjacentHTML('beforeend',html)} function closeSheet(){document.querySelector('.modal')?.remove()}
 function modal(title,body){return `<div class="modal" onclick="if(event.target===this)closeSheet()"><div class="sheet"><div class="row"><h2 style="margin:0">${title}</h2><button class="icon" onclick="closeSheet()">×</button></div>${body}</div></div>`}
 function profile(){openSheet(modal('Your profile',`<div class="profileRow" style="display:flex;gap:12px;align-items:center;margin:18px 0">${avatar(s.profile.name,s.profile.avatar)}<div><strong>${esc(s.profile.name||'Your profile')}</strong><div class="muted">${esc(s.profile.email)}</div></div></div><div class="field"><label>Name</label><input id="pname" value="${esc(s.profile.name||'')}" placeholder="Your name"></div><div class="field"><label>Profile photo URL <span class="muted">(optional)</span></label><input id="pavatar" value="${esc(s.profile.avatar||'')}" placeholder="https://..."></div><button class="btn" style="width:100%" onclick="saveProfile()">Save profile</button>`))}
-async function saveProfile(){let n=document.getElementById('pname').value.trim();if(!n)return toast('Enter your name');const previousName=s.profile.name,previousAvatar=s.profile.avatar;s.profile.name=n;s.profile.avatar=document.getElementById('pavatar').value.trim();const err=await cloudUpsert('profiles',{id:s.profile.id,display_name:n,avatar_url:s.profile.avatar||null,visual_mode:s.profile.visualMode||'classic',dark_mode:s.theme==='dark',notifications:!!s.settings.notifications,updated_at:new Date().toISOString()});if(err){s.profile.name=previousName;s.profile.avatar=previousAvatar;save();return}save();closeSheet();render();toast('Profile saved')}
+async function saveProfile(){let n=document.getElementById('pname').value.trim();if(!n)return toast('Enter your name');const previousName=s.profile.name,previousAvatar=s.profile.avatar;s.profile.name=n;s.profile.avatar=document.getElementById('pavatar').value.trim();if(sb&&s.auth){let {error}=await sb.from('profiles').upsert({id:s.profile.id,display_name:n,avatar_url:s.profile.avatar||null,visual_mode:s.profile.visualMode||'classic',dark_mode:s.theme==='dark',notifications:!!s.settings.notifications,updated_at:new Date().toISOString()});if(error){s.profile.name=previousName;s.profile.avatar=previousAvatar;save();return toast(error.message)}}save();closeSheet();render();toast('Profile saved')}
 function authPage(){return `<main class="authPage"><div class="authLogo"><img src="./icon-v2.svg" alt="أمانة"></div><div class="authTag" dir="rtl">أمانة</div><section class="authCard"><div class="authSwitch"><button class="${!s.signup?'active':''}" onclick="s.signup=false;render()">Log in</button><button class="${s.signup?'active':''}" onclick="s.signup=true;render()">Create account</button></div><button class="googleBtn" onclick="googleLogin()"><span class="googleMark">G</span> Continue with Google</button><div class="or"><span>or</span></div><div class="field"><label>Email</label><input id="loginEmail" type="email" autocomplete="email" placeholder="you@example.com"></div><div class="field"><label>Password</label><input id="loginPass" type="password" autocomplete="current-password" placeholder="••••••••"></div><button class="btn" style="width:100%" onclick="emailAuth()">${s.signup?'Create account':'Log in'}</button><button class="btn secondary" style="width:100%;margin-top:8px" onclick="startDemo()">Try Demo</button><p class="muted tiny center">Your private data stays private. Demo data is separate from real accounts.</p></section></main>`}
 function login(){s.signup=false;s.auth=false;s.demo=false;save();render()}
 function startDemo(){s=clone(fresh);Object.assign(s,clone(demoSeed));s.demo=true;s.auth=false;s.profile={name:'Demo Me',email:'demo@toyou.app',avatar:'',provider:'demo',accent:'#718c73'};s.tour=true;save();render();toast('Demo mode started')}
 async function googleLogin(){if(!sb)return toast('Add Supabase URL + anon key first');const {error}=await sb.auth.signInWithOAuth({provider:'google',options:{redirectTo:location.origin+location.pathname}});if(error)toast(error.message)}
 async function emailAuth(){let e=document.getElementById('loginEmail').value.trim(),p=document.getElementById('loginPass').value;if(!e||p.length<6)return toast('Use a valid email and 6+ character password');if(!sb)return toast('Add Supabase URL + anon key first');let r=s.signup?await sb.auth.signUp({email:e,password:p}):await sb.auth.signInWithPassword({email:e,password:p});if(r.error)return toast(r.error.message);if(s.signup&&r.data.user&&!r.data.session)return toast('Check your email to confirm your account')}
-async function signOut(){try{localStorage.removeItem(LAST_USER_KEY)}catch{} if(quranPollTimer){clearInterval(quranPollTimer);quranPollTimer=null}if(quranChannel&&sb){sb.removeChannel(quranChannel);quranChannel=null}if(usChannel&&sb){sb.removeChannel(usChannel);usChannel=null}if(usSyncTimer){clearTimeout(usSyncTimer);usSyncTimer=null}if(sb)await sb.auth.signOut();KEY=BASE_KEY;s=clone(fresh);render()}
+async function signOut(){if(quranPollTimer){clearInterval(quranPollTimer);quranPollTimer=null}if(quranChannel&&sb){sb.removeChannel(quranChannel);quranChannel=null}if(usChannel&&sb){sb.removeChannel(usChannel);usChannel=null}if(usSyncTimer){clearTimeout(usSyncTimer);usSyncTimer=null}if(sb)await sb.auth.signOut();KEY=BASE_KEY;s=clone(fresh);render()}
 let authQueue=Promise.resolve();
 let needChannel=null;
 let quranPollTimer=null;
@@ -285,42 +242,23 @@ function queueAuthSession(session){
   }).catch(e=>{authReady=true;render();hideSplash();toast('Session sync error: '+(e?.message||e))});
   return authQueue;
 }
-function bootCachedUserOffline(){
-  try{
-    const uid=localStorage.getItem(LAST_USER_KEY)||'';
-    if(!uid)return false;
-    const cached=JSON.parse(localStorage.getItem(BASE_KEY+':'+uid)||'null');
-    if(!cached?.profile?.id)return false;
-    s=cached;KEY=BASE_KEY+':'+uid;s.auth=true;s.demo=false;s.profile.id=uid;
-    authReady=true;render();hideSplash();return true;
-  }catch{return false}
-}
 function initAuth(){
-  if(!sb){if(bootCachedUserOffline())return;authReady=true;render();hideSplash();return}
+  if(!sb){authReady=true;render();hideSplash();return}
   sb.auth.onAuthStateChange((_event,session)=>{setTimeout(()=>queueAuthSession(session),0)});
   Promise.race([sb.auth.getSession(),new Promise((_,reject)=>setTimeout(()=>reject(new Error('Session restore timed out')),5000))]).then(({data})=>queueAuthSession(data.session)).catch(e=>{authReady=true;render();hideSplash();toast('Could not restore session: '+e.message)});
 }
 async function cloudUpsert(table,row,options){
   if(!sb||!s.auth)return null;
-  if(navigator.onLine===false){enqueueOutbox({op:'upsert',table,row,options:options||{}});return null}
   const r=await sb.from(table).upsert(row,options||{});
-  if(r.error){
-    if(isNetworkError(r.error)){enqueueOutbox({op:'upsert',table,row,options:options||{}});return null}
-    toast('Sync error: '+r.error.message);
-  }
+  if(r.error)toast('Sync error: '+r.error.message);
   return r.error||null;
 }
 async function cloudDelete(table,id,filters={}){
   if(!sb||!s.auth)return null;
-  const allFilters=Object.assign({id},filters||{});
-  if(navigator.onLine===false){enqueueOutbox({op:'delete',table,filters:allFilters});return null}
-  let q=sb.from(table).delete();
-  Object.entries(allFilters).forEach(([k,v])=>{if(v!==undefined&&v!==null)q=q.eq(k,v)});
+  let q=sb.from(table).delete().eq('id',id);
+  Object.entries(filters).forEach(([k,v])=>{if(v!==undefined&&v!==null)q=q.eq(k,v)});
   const r=await q.select('id');
-  if(r.error){
-    if(isNetworkError(r.error)){enqueueOutbox({op:'delete',table,filters:allFilters});return null}
-    toast('Sync error: '+r.error.message);return r.error
-  }
+  if(r.error){toast('Sync error: '+r.error.message);return r.error}
   if(!r.data||r.data.length===0){
     const check=await sb.from(table).select('id').eq('id',id).maybeSingle();
     if(!check.error&&check.data){const err=new Error('Delete was not applied');toast('Delete could not be saved to the database');return err}
@@ -382,14 +320,6 @@ async function hydrateCoreData(){
 
 async function hydrateUser(user){
   s=switchUserStorage(user.id);
-  if(navigator.onLine===false){
-    s.profile.id=user.id;
-    s.profile.email=user.email||s.profile.email||'';
-    s.profile.name=s.profile.name||user.user_metadata?.full_name||user.email?.split('@')[0]||'You';
-    s.auth=true;s.demo=false;
-    save();
-    return;
-  }
   let {data:p,error}=await sb.from('profiles').select('*').eq('id',user.id).maybeSingle();
   if(error)return toast(error.message);
   if(!p){
@@ -414,7 +344,6 @@ async function hydrateUser(user){
   await hydrateQuranUs();
   startQuranLiveSync(s.partner?.coupleId);
   await hydrateCoreData();
-  await flushOutbox();
   // Re-register an already-granted push subscription without prompting the user again.
   if(s.settings.notifications&&'Notification' in window&&Notification.permission==='granted')registerWebPushSubscription().catch(()=>{});
 }
@@ -506,7 +435,7 @@ async function deleteHabit(id){
       const q=await sb.from(table).delete().eq(column,id).eq(userColumn,s.profile.id);
       if(q.error)return toast('Could not delete habit data: '+q.error.message);
     }
-    const rh=await cloudDelete('habits',id,{user_id:s.profile.id});if(rh)return;
+    const rh=await sb.from('habits').delete().eq('id',id).eq('user_id',s.profile.id);if(rh.error)return toast('Could not delete habit: '+rh.error.message);
   }
   s.habits=s.habits.filter(x=>x.id!==id);delete s.habitCompletions[id];save();render();toast('Habit deleted');
 }
@@ -521,8 +450,8 @@ async function deleteTask(id){
   const item=s.tasks.find(x=>x.id===id);if(!item)return;
   if(!confirm('Delete this task and its completion history?'))return;
   if(sb&&s.auth){
-    const rc=await cloudDelete('task_completions',null,{task_id:id,owner_user_id:s.profile.id});if(rc)return;
-    const rt=await cloudDelete('tasks',id,{user_id:s.profile.id});if(rt)return;
+    const rc=await sb.from('task_completions').delete().eq('task_id',id).eq('owner_user_id',s.profile.id);if(rc.error)return toast('Could not delete task history: '+rc.error.message);
+    const rt=await sb.from('tasks').delete().eq('id',id).eq('user_id',s.profile.id);if(rt.error)return toast('Could not delete task: '+rt.error.message);
   }
   s.tasks=s.tasks.filter(x=>x.id!==id);delete s.taskCompletions[id];save();render();toast('Task deleted');
 }
@@ -750,7 +679,7 @@ async function deleteJourneyEvent(id){
   const item=s.journey.find(x=>x.id===id);if(!item)return;
   if(!confirm('Delete this journey memory?'))return;
   const err=await cloudDelete('journey_events',id);if(err)return;
-  await cloudDeleteWhere('journey_media',{journey_event_id:id});
+  try{await sb.from('journey_media').delete().eq('journey_event_id',id)}catch{}
   s.journey=s.journey.filter(x=>x.id!==id);save();render();toast('Journey memory deleted');
 }
 async function saveJourneyEdit(id){
@@ -851,8 +780,10 @@ function reset(){if(confirm('Reset all local demo data?')){s=clone(fresh);save()
 function exportData(){const blob=new Blob([JSON.stringify(s,null,2)],{type:'application/json'}),a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download='amanah-my-data.json';a.click();URL.revokeObjectURL(a.href)}
 async function finishOnboarding(){
   s.tour=true;save();render();
-  const err=await cloudUpsert('profiles',{id:s.profile.id,display_name:s.profile.name||'',avatar_url:s.profile.avatar||null,visual_mode:s.profile.visualMode||'classic',dark_mode:s.theme==='dark',notifications:!!s.settings.notifications,tour_completed:true,updated_at:new Date().toISOString()});
-  if(err)toast('Onboarding could not sync: '+err.message);
+  if(sb&&s.auth){
+    const {error}=await sb.from('profiles').update({tour_completed:true,updated_at:new Date().toISOString()}).eq('id',s.profile.id);
+    if(error)toast('Onboarding could not sync: '+error.message);
+  }
 }
 function onboarding(){return `<main class="page"><section class="card center" style="margin-top:20vh"><div class="brand">أمانة</div><p class="muted">Your space for growth, Deen, learning, and the future you’re building.</p><button class="btn" style="width:100%" onclick="finishOnboarding()">Get started</button><button class="btn ghost" style="width:100%;margin-top:8px" onclick="login()">I already have an account</button></section></main>`}
 function syncLabel(){return navigator.onLine===false?'Offline':'Synced'}
@@ -886,7 +817,6 @@ async function saveQuranGoal(){const title=document.getElementById('quranTitle')
 function quranGoal(){const q=(s.quranGoals&&s.quranGoals[0])||{title:'',progress:0};openSheet(modal('Qur’an goal',`<div class="field"><label>Goal</label><input id="quranTitle" value="${esc(q.title)}" placeholder="Read Qur’an consistently"></div><div class="field"><label>Progress: <span id="quranPv">${q.progress}</span>%</label><input id="quranProgress" type="range" min="0" max="100" value="${q.progress}" oninput="document.getElementById('quranPv').textContent=this.value"></div><button class="btn" style="width:100%" onclick="saveQuranGoal()">Save goal</button>`))}
 async function hydrateQuranUs(){
   if(!sb||!s.auth||!s.connected||!s.partner?.coupleId)return;
-  if(navigator.onLine===false)return;
   const date=todayKey(),start=new Date();start.setDate(start.getDate()-365),monthStart=new Date(new Date().getFullYear(),new Date().getMonth(),1);
   const [daily,progress,ayahs,restores]=await Promise.all([
     sb.from('quran_muraajaah_daily').select('*').eq('couple_id',s.partner.coupleId).eq('quran_date',date).maybeSingle(),
@@ -903,10 +833,8 @@ async function hydrateQuranUs(){
 }
 async function ensureQuranDaily(date=todayKey()){
   if(!sb||!s.auth||!s.connected||!s.partner?.coupleId)return false;
-  const row={id:crypto.randomUUID(),couple_id:s.partner.coupleId,quran_date:date,target_pages:3};
-  if(navigator.onLine===false){enqueueOutbox({op:'upsert',table:'quran_muraajaah_daily',row,options:{onConflict:'couple_id,quran_date'}});if(date===todayKey())s.quranUsDaily=row;save();return true}
-  const r=await sb.from('quran_muraajaah_daily').upsert(row,{onConflict:'couple_id,quran_date'});
-  if(r.error){if(isNetworkError(r.error)){enqueueOutbox({op:'upsert',table:'quran_muraajaah_daily',row,options:{onConflict:'couple_id,quran_date'}});if(date===todayKey())s.quranUsDaily=row;save();return true}toast('Could not create Qur’an target: '+r.error.message);return false}
+  const row={id:crypto.randomUUID(),couple_id:s.partner.coupleId,quran_date:date,target_pages:3},r=await sb.from('quran_muraajaah_daily').upsert(row,{onConflict:'couple_id,quran_date'});
+  if(r.error){toast('Could not create Qur’an target: '+r.error.message);return false}
   if(date===todayKey())s.quranUsDaily=Object.assign({target_pages:3},s.quranUsDaily||{},row,{couple_id:s.partner.coupleId,quran_date:date,target_pages:3});
   return true;
 }
@@ -933,20 +861,11 @@ async function restoreQuranMuraajaah(){
   const before=new Date(d);before.setDate(d.getDate()-1);const beforeKey=localDateKey(before);
   if(!(s.quranUsProgress||[]).some(x=>x.user_id===s.profile.id&&x.quran_date===beforeKey&&x.pages_completed===3))return toast('No recent broken Qur’an streak to restore');
   if(!await ensureQuranDaily(missed))return;
-  const restoreId=crypto.randomUUID(),restoreRow={id:restoreId,couple_id:s.partner.coupleId,user_id:s.profile.id,restored_date:missed},now=new Date().toISOString(),row={couple_id:s.partner.coupleId,quran_date:missed,user_id:s.profile.id,pages_completed:3,completed_at:now,updated_at:now};
-  if(navigator.onLine===false){
-    enqueueOutbox({op:'upsert',table:'quran_muraajaah_restores',row:restoreRow,options:{onConflict:'id'}});
-    enqueueOutbox({op:'upsert',table:'quran_muraajaah_progress',row,options:{onConflict:'couple_id,quran_date,user_id'}});
-    s.quranUsProgress=[...(s.quranUsProgress||[]).filter(x=>!(x.user_id===s.profile.id&&x.quran_date===missed)),row];
-    s.quranMuraajaahRestoresUsed=(s.quranMuraajaahRestoresUsed||0)+1;save();render();toast('🔥 Qur’an streak restored offline · will sync ✓');return;
-  }
-  const ins=await sb.from('quran_muraajaah_restores').insert(restoreRow).select('id').single();
-  if(ins.error){
-    if(isNetworkError(ins.error)){enqueueOutbox({op:'upsert',table:'quran_muraajaah_restores',row:restoreRow,options:{onConflict:'id'}});enqueueOutbox({op:'upsert',table:'quran_muraajaah_progress',row,options:{onConflict:'couple_id,quran_date,user_id'}});s.quranUsProgress=[...(s.quranUsProgress||[]).filter(x=>!(x.user_id===s.profile.id&&x.quran_date===missed)),row];s.quranMuraajaahRestoresUsed=(s.quranMuraajaahRestoresUsed||0)+1;save();render();toast('🔥 Qur’an streak restored offline · will sync ✓');return}
-    return toast(ins.error.code==='23505'?'That day is already restored':'Qur’an restore failed: '+ins.error.message);
-  }
-  const prog=await cloudUpsert('quran_muraajaah_progress',row,{onConflict:'couple_id,quran_date,user_id'});
-  if(prog)return;
+  const ins=await sb.from('quran_muraajaah_restores').insert({id:crypto.randomUUID(),couple_id:s.partner.coupleId,user_id:s.profile.id,restored_date:missed}).select('id').single();
+  if(ins.error)return toast(ins.error.code==='23505'?'That day is already restored':'Qur’an restore failed: '+ins.error.message);
+  const now=new Date().toISOString(),row={couple_id:s.partner.coupleId,quran_date:missed,user_id:s.profile.id,pages_completed:3,completed_at:now,updated_at:now};
+  const prog=await sb.from('quran_muraajaah_progress').upsert(row,{onConflict:'couple_id,quran_date,user_id'});
+  if(prog.error){await sb.from('quran_muraajaah_restores').delete().eq('id',ins.data?.id);return toast('Could not save restored Qur’an progress: '+prog.error.message)}
   s.quranUsProgress=[...(s.quranUsProgress||[]).filter(x=>!(x.user_id===s.profile.id&&x.quran_date===missed)),row];
   s.quranMuraajaahRestoresUsed=(s.quranMuraajaahRestoresUsed||0)+1;save();render();toast('🔥 Qur’an streak restored • '+quranStreakRestoresLeft()+' left');
 }
@@ -954,27 +873,13 @@ async function toggleQuranMuraajaah(){
   if(!sb||!s.auth)return toast('Sign in to use shared Qur’an');
   if(!s.connected||!s.partner?.coupleId)return toast('Connect first');
   if(!await ensureQuranDaily())return;
-  const date=todayKey(),coupleId=s.partner.coupleId;
-  const local=(s.quranUsProgress||[]).find(x=>x.user_id===s.profile.id&&x.quran_date===date);
-  if(navigator.onLine===false){
-    const done=local?.pages_completed===3,now=new Date().toISOString(),row={couple_id:coupleId,quran_date:date,user_id:s.profile.id,pages_completed:done?0:3,completed_at:done?null:now,updated_at:now};
-    s.quranUsProgress=[...(s.quranUsProgress||[]).filter(x=>!(x.user_id===s.profile.id&&x.quran_date===date)),...(row.pages_completed===3?[row]:[])];
-    enqueueOutbox({op:'upsert',table:'quran_muraajaah_progress',row,options:{onConflict:'couple_id,quran_date,user_id'}});
-    save();render();toast(row.pages_completed===3?'3 pages completed offline · will sync ✓':'Marked incomplete offline · will sync');return;
-  }
-  const current=await sb.from('quran_muraajaah_progress').select('*').eq('couple_id',coupleId).eq('quran_date',date).eq('user_id',s.profile.id).maybeSingle();
-  if(current.error){if(isNetworkError(current.error))return toggleQuranMuraajaahOffline(date,coupleId,local);return toast('Could not read your Qur’an progress: '+current.error.message)}
+  const date=todayKey(),coupleId=s.partner.coupleId,current=await sb.from('quran_muraajaah_progress').select('*').eq('couple_id',coupleId).eq('quran_date',date).eq('user_id',s.profile.id).maybeSingle();
+  if(current.error)return toast('Could not read your Qur’an progress: '+current.error.message);
   const done=current.data?.pages_completed===3,now=new Date().toISOString(),row={couple_id:coupleId,quran_date:date,user_id:s.profile.id,pages_completed:done?0:3,completed_at:done?null:now,updated_at:now};
-  const result=await cloudUpsert('quran_muraajaah_progress',row,{onConflict:'couple_id,quran_date,user_id'});
-  if(result)return;
+  const result=current.data?await sb.from('quran_muraajaah_progress').update({pages_completed:row.pages_completed,completed_at:row.completed_at,updated_at:row.updated_at}).eq('couple_id',coupleId).eq('quran_date',date).eq('user_id',s.profile.id):await sb.from('quran_muraajaah_progress').insert(row);
+  if(result.error)return toast('Could not save Qur’an progress: '+result.error.message);
   s.quranUsProgress=[...(s.quranUsProgress||[]).filter(x=>!(x.user_id===s.profile.id&&x.quran_date===date)),...(row.pages_completed===3?[row]:[])];
   save();render();toast(row.pages_completed===3?'3 pages completed ✓':'Marked incomplete');
-}
-async function toggleQuranMuraajaahOffline(date,coupleId,local){
-  const done=local?.pages_completed===3,now=new Date().toISOString(),row={couple_id:coupleId,quran_date:date,user_id:s.profile.id,pages_completed:done?0:3,completed_at:done?null:now,updated_at:now};
-  s.quranUsProgress=[...(s.quranUsProgress||[]).filter(x=>!(x.user_id===s.profile.id&&x.quran_date===date)),...(row.pages_completed===3?[row]:[])];
-  enqueueOutbox({op:'upsert',table:'quran_muraajaah_progress',row,options:{onConflict:'couple_id,quran_date,user_id'}});
-  save();render();toast(row.pages_completed===3?'3 pages completed offline · will sync ✓':'Marked incomplete offline · will sync');
 }
 function openQuranStreak(userId){
   const mine=userId===s.profile.id,name=mine?(s.profile.name||'You'):(s.partner?.name||'Her'),current=quranStreakFor(userId),best=quranBestStreakFor(userId),candidate=mine?quranRestoreCandidate():null,left=quranStreakRestoresLeft();
@@ -998,13 +903,13 @@ async function saveMeaningfulAyahEdit(id){
   const a=(s.quranUsAyahs||[]).find(x=>x.id===id);if(!a||a.created_by!==s.profile.id)return;
   const surah=document.getElementById('editAyahSurah')?.value.trim()||'',ayah=+(document.getElementById('editAyahNumber')?.value||0),arabic=document.getElementById('editAyahArabic')?.value.trim()||'',translation=document.getElementById('editAyahTranslation')?.value.trim()||'',note=document.getElementById('editAyahNote')?.value.trim()||'';
   if(!surah||!ayah||!arabic||!translation)return toast('Add the reference, Arabic and translation');
-  const err=await cloudUpdate('quran_ayah_notes',{surah,ayah,arabic,translation,note,updated_at:new Date().toISOString()},{id,created_by:s.profile.id});if(err)return;
+  const r=await sb.from('quran_ayah_notes').update({surah,ayah,arabic,translation,note,updated_at:new Date().toISOString()}).eq('id',id).eq('created_by',s.profile.id);if(r.error)return toast('Could not update ayah: '+r.error.message);
   Object.assign(a,{surah,ayah,arabic,translation,note});save();closeSheet();render();toast('Ayah updated ✓');
 }
 async function deleteMeaningfulAyah(id){
   const a=(s.quranUsAyahs||[]).find(x=>x.id===id);if(!a||a.created_by!==s.profile.id)return;
   closeSheet();if(!confirm('Delete this meaningful ayah?'))return;
-  const r=await cloudDelete('quran_ayah_notes',id,{created_by:s.profile.id});if(r)return;
+  const r=await sb.from('quran_ayah_notes').delete().eq('id',id).eq('created_by',s.profile.id);if(r.error)return toast('Could not delete ayah: '+r.error.message);
   s.quranUsAyahs=s.quranUsAyahs.filter(x=>x.id!==id);save();render();toast('Ayah deleted');
 }
 function quranUsAyahCountPlaceholder(){
@@ -1018,7 +923,7 @@ function addMeaningfulAyah(){
 async function saveMeaningfulAyah(){
   const surah=document.getElementById('ayahSurah')?.value.trim()||'',ayah=+(document.getElementById('ayahNumber')?.value||0),arabic=document.getElementById('ayahArabic')?.value.trim()||'',translation=document.getElementById('ayahTranslation')?.value.trim()||'',note=document.getElementById('ayahNote')?.value.trim()||'';
   if(!surah||!ayah||!arabic||!translation)return toast('Add the reference, Arabic and translation');
-  const id=crypto.randomUUID(),row={id,couple_id:s.partner.coupleId,created_by:s.profile.id,surah,ayah,arabic,translation,note},err=await cloudUpsert('quran_ayah_notes',row,{onConflict:'id'});if(err)return;
+  const id=crypto.randomUUID(),row={id,couple_id:s.partner.coupleId,created_by:s.profile.id,surah,ayah,arabic,translation,note},r=await sb.from('quran_ayah_notes').insert(row);if(r.error)return toast('Could not save ayah: '+r.error.message);
   s.quranUsAyahs=[row,...(s.quranUsAyahs||[])];save();closeSheet();render();toast('Ayah saved for Us');
 }
 function quranTogether(){
@@ -1075,7 +980,11 @@ function editSharedGoal(id){
   const g=s.sharedGoals.find(x=>x.id===id);if(!g)return;
   openSheet(modal('Our goal','<div class="field"><label>Goal</label><input id="sharedTitleEdit" value="'+esc(g.title)+'"></div><div class="field"><label>Progress: <span id="sharedPv">'+esc(g.progress||0)+'</span>%</label><input id="sharedProgress" type="range" min="0" max="100" value="'+esc(g.progress||0)+'" oninput="document.getElementById(\'sharedPv\').textContent=this.value"></div><div class="field"><label>Description</label><textarea id="sharedDescEdit">'+esc(g.desc||'')+'</textarea></div><div class="field"><label>Target date</label><input id="sharedTargetEdit" type="date" value="'+esc(g.target||'')+'"></div><button class="btn" style="width:100%" onclick="saveSharedGoalEdit(\''+id+'\')">Save</button><button class="btn danger" style="width:100%;margin-top:8px" onclick="deleteSharedGoal(\''+id+'\')">Delete</button><button class="btn ghost" style="width:100%;margin-top:8px" onclick="closeSheet()">Cancel</button>'));
 }
-
+function courses(){
+  const mine=s.courses.filter(c=>c.owner==='me'),hers=s.courses.filter(c=>c.owner!=='me'),avg=mine.length?Math.round(mine.reduce((a,c)=>a+(+c.progress||0),0)/mine.length):0;
+  const renderCourse=c=>'<section class="card"><div class="row"><div><strong>'+esc(c.name)+'</strong><div class="muted">'+(c.owner==='me'?'Mine':'Hers')+' · '+esc(c.status||courseStatus(c.progress))+'</div></div><span>'+Math.round(c.progress||0)+'%</span></div><div class="progress" style="margin-top:10px"><i style="width:'+Math.max(0,Math.min(100,c.progress||0))+'%"></i></div><div class="row" style="margin-top:10px"><span class="pill">'+(c.progress>=100?'Complete':c.progress===0?'0% — Not started':c.progress+'% — In progress')+'</span>'+(c.owner==='me'?'<button class="btn secondary" onclick="editCourse(\''+c.id+'\')">Manage</button>':'<span class="muted small">View only</span>')+'</div></section>';
+  return '<main class="page"><button class="back" onclick="go(\'us\')">‹ Us</button><div class="row"><div><h1 style="margin-bottom:3px">Courses</h1><div class="muted">'+mine.length+' mine · '+hers.length+' hers · '+avg+'% average</div></div><button class="btn secondary" onclick="course()">+ Add</button></div>'+(mine.length?mine.map(renderCourse).join(''):'<section class="card empty">No courses yet. Add one and track it.</section>')+(hers.length?'<h3 class="sectionTitle">Her Courses</h3>'+hers.map(renderCourse).join(''):'')+'</main>';
+}
 function deenTogether(){
   const learned=(s.hadithLearned||[]).length,hadithPct=Math.min(100,Math.round(learned/365*100));
   return '<main class="page"><button class="back" onclick="go(\'us\')">‹ Us</button><h1>Deen Together</h1><section class="card" onclick="openQuranTogether()"><div class="row"><div><strong>Qur’an</strong><div class="muted">3-page daily muraaja’ah · meaningful ayahs</div></div><span class="pill">Together</span></div></section><section class="card" onclick="hadithTogether()"><div class="row"><div><strong>365 Hadith</strong><div class="muted">'+learned+'/365 learned · '+hadithPct+'%</div></div><span class="pill">'+hadithPct+'%</span></div><div class="progress" style="margin-top:12px"><i style="width:'+hadithPct+'%"></i></div></section><section class="card" onclick="dhikr()"><div class="row"><div><strong>Dhikr</strong><div class="muted">Open today’s four adhkar</div></div><span class="pill">'+s.dhikr+'/400</span></div></section><section class="card" onclick="challenge()"><div class="row"><div><strong>Islamic Learning</strong><div class="muted">Challenges based on what you learned</div></div><span>›</span></div></section>deenChallengeResult()</main>';
@@ -1098,97 +1007,449 @@ function hadithTogetherPage(){
   const courseMap=next.length?next.map(function(h){const x=hadithExcerpt(h,145);return '<button class="item" style="width:100%;text-align:left;cursor:pointer;margin-top:8px" onclick="hadithPractice(\''+h.id+'\')"><div class="row"><strong>Day '+h.course_day+'</strong><span class="pill">'+(learned.has(h.id)?'✓':'Next')+'</span></div><div class="muted tiny" style="margin-top:4px">Narrated by '+esc(x.narrator)+'</div><div style="margin-top:4px">'+esc(x.body)+'</div></button>'}).join(''):'<div class="empty">You have reached the end of the loaded course.</div>';
   return '<main class="page"><button class="back" onclick="go(\'deenTogether\')">‹ Deen Together</button><div class="row"><div><h1 style="margin-bottom:3px">365 Hadith</h1><div class="muted">One lesson at a time · only Sahih al-Bukhari & Sahih Muslim</div></div><span class="pill">'+learned.size+'/365</span></div><div class="progress" style="margin:12px 0 10px"><i style="width:'+pct+'%"></i></div><div class="muted small">'+pct+'% completed · memorize the meaning, not the chain.</div>'+todayCard+'<section class="card"><div class="row"><div><strong>Next in your path</strong><div class="muted">Seven small lessons, then keep moving.</div></div><span class="pill">7</span></div>'+courseMap+'</section></main>';
 }
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+async function challenge(){
+  let q=null;
+  if(sb&&s.auth){const r=await sb.from('deen_challenges').select('*').eq('active',true).limit(1).maybeSingle();q=r.data}
+  const question=q?.question||'A person gives charity sincerely for Allah, while another does it only so people praise him. What is the key difference?';
+  const options=q?.options||['The amount of charity','The intention behind the action','Who received the charity','When it was given'];
+  const id=q?.id||'cc848ad9-d21b-4f58-87ba-5269cfb37fe1';
+  openSheet(modal('Deen Challenge',`<span class="pill">Scenario · Based on learned material</span><h3>${esc(question)}</h3><div class="stack">${options.map((x,i)=>`<button class="listBtn" onclick="challengeAnswer('${id}',${i})">${String.fromCharCode(65+i)}. ${esc(x)}</button>`).join('')}</div>`))
+}
+async function challengeAnswer(id,i){
+  const selected=String.fromCharCode(65+i);
+  let correct=selected==='B';
+  if(sb&&s.auth){
+    const q=await sb.from('deen_challenges').select('correct_option').eq('id',id).maybeSingle();
+    if(q.error){toast('Could not load the challenge answer: '+q.error.message);return}
+    if(q.data?.correct_option)correct=selected===q.data.correct_option;
+    const err=await cloudUpsert('deen_challenge_attempts',{id:crypto.randomUUID(),user_id:s.profile.id,challenge_id:id,selected_option:selected,correct});
+    if(err)return;
+  }
+  closeSheet();openSheet(modal('Answer',`<div class="pill">${correct?'Correct ✓':'Review this one'}</div><p>${correct?'That answer matches the saved challenge answer.':'Review the learned material and try to remember the principle behind it.'}</p><p class="muted">Based on the learned material.</p><button class="btn" style="width:100%" onclick="closeSheet()">Continue</button>`))
+}
+function courseStatus(progress){return progress>=100?'Complete':progress<=0?'Not started':'In progress'}
+function scheduleLabel(days){
+  const n=Math.max(1,Math.min(7,+days||7));
+  return n===7?'Every day':n+' day'+(n===1?'':'s')+' per week';
+}
+function courseTargetDate(start,duration,daysPerWeek=7){
+  if(!start||!duration)return '';
+  const weeks=Math.ceil(+duration/Math.max(1,Math.min(7,+daysPerWeek||7)));
+  const d=new Date(start+'T00:00:00');d.setDate(d.getDate()+weeks*7-1);return localDateKey(d);
+}
+function coursePlanLabel(c){
+  const bits=[];if(c.durationDays)bits.push(c.durationDays+' days');if(c.daysPerWeek)bits.push(scheduleLabel(c.daysPerWeek));return bits.join(' · ')||'Plan not set';
+}
+function courseReviewCount(id){return (s.courseReviews||[]).filter(r=>r.courseId===id).length}
+function course(){
+  openSheet(modal('Create personal course',
+    '<section class="item" style="margin:6px 0 14px"><div class="eyebrow">PERSONAL COURSE</div><strong>This course belongs to you.</strong><div class="muted small" style="margin-top:4px">You control the progress, reviews, and notes.</div></section>'+
+    '<div class="field"><label>Course name</label><input id="courseName" placeholder="Web Development"></div>'+
+    '<div class="field"><label>How many days?</label><input id="courseDuration" type="number" min="1" max="3650" placeholder="30"></div>'+
+    '<div class="field"><label>How often?</label><select id="courseDaysWeek">'+[1,2,3,4,5,6,7].map(n=>'<option value="'+n+'">'+scheduleLabel(n)+'</option>').join('')+'</select></div>'+
+    '<div class="field"><label>Progress: <span id="newCoursePv">0</span>%</label><input id="newCourseProgress" type="range" min="0" max="100" value="0" oninput="document.getElementById(\'newCoursePv\').textContent=this.value"></div>'+
+    '<div class="field"><label>Notes</label><textarea id="courseNotes" placeholder="What are you learning, useful resources, or reminders?"></textarea></div>'+
+    '<div class="field"><label>Start date</label><input id="courseStart" type="date" value="'+todayKey()+'"></div>'+
+    '<button class="btn" style="width:100%;margin-top:4px" onclick="createCourse()">Create course</button>'+
+    '<button class="btn ghost" style="width:100%;margin-top:8px" onclick="closeSheet()">Cancel</button>'));
+}
+async function createCourse(){
+  const n=document.getElementById('courseName')?.value.trim()||'',duration=+(document.getElementById('courseDuration')?.value||0),daysWeek=+(document.getElementById('courseDaysWeek')?.value||7),progress=Math.max(0,Math.min(100,+(document.getElementById('newCourseProgress')?.value||0))),notes=document.getElementById('courseNotes')?.value.trim()||'',start=document.getElementById('courseStart')?.value||todayKey();
+  if(!n)return toast('Add a course name');
+  if(!duration)return toast('Choose how many days the course takes');
+  const id=crypto.randomUUID(),coupleId=s.connected?s.partner?.coupleId:null,targetDate=courseTargetDate(start,duration,daysWeek),status=courseStatus(progress);
+  const err=await cloudUpsert('courses',{id,user_id:s.profile.id,couple_id:coupleId,title:n,progress,status,duration_days:duration,days_per_week:daysWeek,notes,start_date:start,target_date:targetDate});if(err)return;
+  s.courses.unshift({id,name:n,owner:'me',progress,status,coupleId,durationDays:duration,daysPerWeek:daysWeek,notes,startDate:start,targetDate:targetDate});save();closeSheet();render();toast('Personal course created ✓');
+}
+async function saveCourseEdit(id){
+  const c=s.courses.find(x=>x.id===id);if(!c||c.owner!=='me')return toast('Only your course can be managed');
+  const name=document.getElementById('editCourseName')?.value.trim()||'',duration=+(document.getElementById('editCourseDuration')?.value||0),daysWeek=+(document.getElementById('editCourseDaysWeek')?.value||7),progress=Math.max(0,Math.min(100,+(document.getElementById('courseProgress')?.value||0))),notes=document.getElementById('editCourseNotes')?.value.trim()||'',start=document.getElementById('editCourseStart')?.value||c.startDate||todayKey();
+  if(!name||!duration||!daysWeek||daysWeek>7)return toast('Complete the course plan first');
+  const targetDate=courseTargetDate(start,duration,daysWeek),status=courseStatus(progress);
+  const err=await cloudUpsert('courses',{id:c.id,user_id:s.profile.id,couple_id:c.coupleId||null,title:name,progress,status,duration_days:duration,days_per_week:daysWeek,notes,start_date:start,target_date:targetDate});if(err)return;
+  Object.assign(c,{name,progress,status,durationDays:duration,daysPerWeek:daysWeek,notes,startDate:start,targetDate:targetDate});save();closeSheet();render();toast('Course updated ✓');
+}
+async function deleteCourse(id){
+  const c=s.courses.find(x=>x.id===id);if(!c||c.owner!=='me')return;if(!confirm('Delete this course and its reviews?'))return;
+  const reviewIds=(s.courseReviews||[]).filter(r=>r.courseId===id&&r.userId===s.profile.id).map(r=>r.id);
+  for(const rid of reviewIds){const re=await cloudDelete('course_reviews',rid,{user_id:s.profile.id});if(re)return}
+  const err=await cloudDelete('courses',id,{user_id:s.profile.id});if(err)return;
+  s.courses=s.courses.filter(x=>x.id!==id);s.courseReviews=(s.courseReviews||[]).filter(r=>r.courseId!==id);save();render();toast('Course deleted');
+}
+function editCourse(id){
+  const c=s.courses.find(x=>x.id===id);if(!c)return;if(c.owner!=='me')return toast('Her course is view-only');
+  openSheet(modal('Manage course',
+    '<section class="item" style="margin:6px 0 14px"><div class="eyebrow">PERSONAL COURSE</div><strong>This course belongs to you.</strong><div class="muted small" style="margin-top:4px">Progress is yours to update.</div></section>'+
+    '<div class="field"><label>Course name</label><input id="editCourseName" value="'+esc(c.name||'')+'"></div>'+
+    '<div class="field"><label>How many days?</label><input id="editCourseDuration" type="number" min="1" max="3650" value="'+esc(c.durationDays||30)+'"></div>'+
+    '<div class="field"><label>How often?</label><select id="editCourseDaysWeek">'+[1,2,3,4,5,6,7].map(n=>'<option value="'+n+'" '+(+c.daysPerWeek===n?'selected':'')+'>'+scheduleLabel(n)+'</option>').join('')+'</select></div>'+
+    '<div class="field"><label>Progress: <span id="coursePv">'+esc(c.progress||0)+'</span>%</label><input id="courseProgress" type="range" min="0" max="100" value="'+esc(c.progress||0)+'" oninput="document.getElementById(\'coursePv\').textContent=this.value"></div>'+
+    '<div class="field"><label>Notes</label><textarea id="editCourseNotes">'+esc(c.notes||'')+'</textarea></div>'+
+    '<div class="field"><label>Start date</label><input id="editCourseStart" type="date" value="'+esc(c.startDate||todayKey())+'"></div>'+
+    '<button class="btn" style="width:100%" onclick="saveCourseEdit(\''+id+'\')">Save changes</button>'+
+    '<button class="btn danger" style="width:100%;margin-top:8px" onclick="deleteCourse(\''+id+'\')">Delete course</button>'+
+    '<button class="btn ghost" style="width:100%;margin-top:8px" onclick="closeSheet()">Cancel</button>'));
+}
+function addCourseReview(id){
+  const c=s.courses.find(x=>x.id===id);if(!c)return;if(c.owner!=='me')return toast('Her course is view-only');
+  openSheet(modal('Course review','<p class="muted">Keep a simple record of what you reviewed.</p><div class="field"><label>Review date</label><input id="courseReviewDate" type="date" value="'+todayKey()+'"></div><div class="field"><label>What did you review?</label><textarea id="courseReviewNote" placeholder="What did you learn, practice, or understand better?"></textarea></div><button class="btn" style="width:100%" onclick="saveCourseReview(\''+id+'\')">Save review</button><button class="btn ghost" style="width:100%;margin-top:8px" onclick="closeSheet()">Cancel</button>'));
+}
+async function saveCourseReview(courseId){
+  const c=s.courses.find(x=>x.id===courseId);if(!c||c.owner!=='me')return;
+  const date=document.getElementById('courseReviewDate')?.value||todayKey(),note=document.getElementById('courseReviewNote')?.value.trim()||'',id=crypto.randomUUID(),err=await cloudUpsert('course_reviews',{id,course_id:courseId,user_id:s.profile.id,review_date:date,note});if(err)return;
+  s.courseReviews=[{id,courseId,userId:s.profile.id,date,note,createdAt:new Date().toISOString()},...(s.courseReviews||[])];save();closeSheet();render();toast('Review saved ✓');
+}
+async function deleteCourseReview(id){
+  const r=(s.courseReviews||[]).find(x=>x.id===id);if(!r||r.userId!==s.profile.id)return;
+  if(!confirm('Delete this review?'))return;
+  const err=await cloudDelete('course_reviews',id,{user_id:s.profile.id});if(err)return;
+  s.courseReviews=(s.courseReviews||[]).filter(x=>x.id!==id);render();toast('Review deleted');
+}
+function courseDetail(id){
+  const c=s.courses.find(x=>x.id===id);
+  if(!c)return '<main class="page"><button class="back" onclick="go(\'courses\')">‹ Courses</button><div class="empty">Course not found.</div></main>';
+  const reviews=(s.courseReviews||[]).filter(r=>r.courseId===id).sort((a,b)=>String(b.date).localeCompare(String(a.date))),recent=reviews.slice(0,8),status=courseStatus(c.progress||0);
+  const target=c.targetDate?new Date(c.targetDate+'T00:00:00'):null,daysLeft=target?Math.max(0,Math.ceil((target-new Date())/86400000)):null;
+  const reviewList=recent.length?recent.map(function(r){return '<div class="reviewRow"><div class="row"><strong>'+esc(r.date)+'</strong><span class="pill">'+(r.userId===s.profile.id?'You':esc(s.partner?.name||'Her'))+'</span></div><div class="muted" style="margin-top:6px">'+esc(r.note||'Review logged.')+'</div>'+(r.userId===s.profile.id?'<button class="icon" title="Delete review" style="margin-top:8px" onclick="deleteCourseReview(\''+r.id+'\')">×</button>':'')+'</div>'}).join(''):'<div class="empty">No reviews logged yet.</div>';
+  const actions=c.owner==='me'?'<div class="grid2" style="margin-top:14px"><button class="btn secondary" onclick="addCourseReview(\''+id+'\')">Log review</button><button class="btn" onclick="editCourse(\''+id+'\')">Manage</button></div>':'<div class="pill" style="margin-top:14px;display:block;text-align:center">Personal course · View only</div>';
+  return '<main class="page"><button class="back" onclick="go(\'courses\')">‹ Courses</button><section class="card"><div class="eyebrow">'+(c.owner==='me'?'YOUR LEARNING PLAN':'HER LEARNING PLAN')+'</div><div class="row" style="margin-top:6px"><div><h1 style="margin:0">'+esc(c.name)+'</h1><div class="muted" style="margin-top:5px">'+esc(coursePlanLabel(c))+'</div></div><span class="pill">'+Math.round(c.progress||0)+'%</span></div><div class="progress" style="margin-top:14px"><i style="width:'+Math.max(0,Math.min(100,c.progress||0))+'%"></i></div><div class="row" style="margin-top:10px"><strong>'+esc(status)+'</strong><span class="muted small">'+(daysLeft===null?'':daysLeft+' day'+(daysLeft===1?'':'s')+' left')+'</span></div><div class="grid2" style="margin-top:13px"><div class="item center"><strong>'+esc(c.daysPerWeek?scheduleLabel(c.daysPerWeek):'—')+'</strong><div class="muted tiny">weekly rhythm</div></div><div class="item center"><strong>'+courseReviewCount(c.id)+'</strong><div class="muted tiny">reviews logged</div></div></div>'+(c.notes?'<div class="courseNotes"><strong>Notes</strong><div class="muted" style="margin-top:5px">'+esc(c.notes)+'</div></div>':'')+actions+'</section><section class="card"><div class="row"><div><strong>What you covered</strong><div class="muted">Keep reviews short: what did you actually learn or practice?</div></div><span class="pill">'+reviews.length+'</span></div>'+reviewList+'</section></main>';
+}
+function courses(){
+  const mine=s.courses.filter(c=>c.owner==='me'),hers=s.courses.filter(c=>c.owner!=='me'),avg=mine.length?Math.round(mine.reduce((a,c)=>a+(+c.progress||0),0)/mine.length):0,focus=mine.find(c=>c.progress<100)||mine[0]||null;
+  const renderCourse=c=>'<button class="card" style="width:100%;text-align:left;cursor:pointer" onclick="courseDetail(\''+c.id+'\')"><div class="row"><div><div class="eyebrow">'+(c.owner==='me'?'PERSONAL LEARNING PLAN':'HER LEARNING PLAN')+'</div><strong>'+esc(c.name)+'</strong><div class="muted">'+esc(coursePlanLabel(c))+(c.targetDate?' · target '+esc(c.targetDate):'')+'</div></div><span class="pill">'+Math.round(c.progress||0)+'%</span></div><div class="progress" style="margin-top:11px"><i style="width:'+Math.max(0,Math.min(100,c.progress||0))+'%"></i></div><div class="row" style="margin-top:9px"><span class="muted small">'+esc(courseStatus(c.progress||0))+'</span><span class="muted small">'+courseReviewCount(c.id)+' review'+(courseReviewCount(c.id)===1?'':'s')+'</span></div></button>';
+  const focusCard=focus?'<section class="card"><div class="eyebrow">CURRENT FOCUS</div><div class="row" style="margin-top:6px"><div><h2 style="margin:0">'+esc(focus.name)+'</h2><div class="muted" style="margin-top:4px">'+esc(coursePlanLabel(focus))+'</div></div><strong>'+Math.round(focus.progress||0)+'%</strong></div><div class="progress" style="margin-top:12px"><i style="width:'+Math.max(0,Math.min(100,focus.progress||0))+'%"></i></div><button class="btn" style="width:100%;margin-top:12px" onclick="courseDetail(\''+focus.id+'\')">Continue learning</button></section>':'<section class="card"><div class="eyebrow">ONE THING AT A TIME</div><h2 style="margin:5px 0">Build a real learning plan.</h2><div class="muted">Choose what you want to learn, how often you’ll show up, and how you’ll track progress.</div><button class="btn" style="width:100%;margin-top:12px" onclick="course()">Create first plan</button></section>';
+  return '<main class="page"><button class="back" onclick="go(\'us\')">‹ Us</button><div class="row"><div><h1 style="margin-bottom:3px">Courses</h1><div class="muted">Your learning, your pace · '+avg+'% average progress</div></div><button class="btn secondary" onclick="course()">+ Add</button></div>'+focusCard+(mine.length?'<h3 class="sectionTitle">My learning plans</h3>'+mine.map(renderCourse).join(''):'')+(hers.length?'<h3 class="sectionTitle">Her learning plans</h3>'+hers.map(renderCourse).join(''):'')+'</main>';
+}
+function journey(){go('journey')}
+async function deleteJourneyEvent(id){
+  const item=s.journey.find(x=>x.id===id);if(!item)return;
+  if(!confirm('Delete this journey memory?'))return;
+  const err=await cloudDelete('journey_events',id);if(err)return;
+  try{await sb.from('journey_media').delete().eq('journey_event_id',id)}catch{}
+  s.journey=s.journey.filter(x=>x.id!==id);save();render();toast('Journey memory deleted');
+}
+async function saveJourneyEdit(id){
+  const j=s.journey.find(x=>x.id===id);if(!j)return;
+  const title=document.getElementById('editJTitle')?.value.trim()||'',date=document.getElementById('editJDate')?.value||todayKey(),type=document.getElementById('editJType')?.value||'past',desc=document.getElementById('editJDesc')?.value.trim()||'';
+  if(!title)return toast('Add a title');
+  const err=await cloudUpsert('journey_events',{id,owner_user_id:j.ownerUserId||s.profile.id,created_by:j.createdBy||s.profile.id,couple_id:s.partner?.coupleId||null,title,event_date:date,time_position:type,description:desc});if(err)return;
+  Object.assign(j,{title,date,type,desc});save();closeSheet();render();toast('Journey memory updated ✓');
+}
+function startJourneyHold(e,id){
+  if(e.pointerType==='mouse'&&e.button!==0)return;
+  journeyHoldTriggered=false;clearJourneyHold();journeyHoldTimer=setTimeout(function(){journeyHoldTriggered=true;openJourneyActions(id)},550);
+}
+function clearJourneyHold(){if(journeyHoldTimer){clearTimeout(journeyHoldTimer);journeyHoldTimer=null}}
+function toggleJourneyCard(e,id){e.preventDefault();e.stopPropagation();if(journeyHoldTriggered){journeyHoldTriggered=false;return}editJourneyEvent(id)}
+function openJourneyActions(id){
+  clearJourneyHold();const j=s.journey.find(x=>x.id===id);if(!j)return;
+  openSheet(modal('Journey memory','<div class="muted" style="margin-bottom:14px">'+esc(j.title)+'</div><button class="btn" style="width:100%" onclick="editJourneyEvent(\''+id+'\')">Edit</button><button class="btn danger" style="width:100%;margin-top:8px" onclick="deleteJourneyEvent(\''+id+'\');closeSheet()">Delete</button><button class="btn ghost" style="width:100%;margin-top:8px" onclick="closeSheet()">Cancel</button>'));
+}
+function editJourneyEvent(id){
+  const j=s.journey.find(x=>x.id===id);if(!j)return;
+  openSheet(modal('Edit journey memory','<div class="field"><label>What happened?</label><input id="editJTitle" value="'+esc(j.title||'')+'"></div><div class="field"><label>Date</label><input id="editJDate" type="date" value="'+esc(j.date||todayKey())+'"></div><div class="field"><label>Time position</label><select id="editJType"><option value="past" '+(j.type==='past'?'selected':'')+'>Past</option><option value="present" '+(j.type==='present'?'selected':'')+'>Present</option><option value="future" '+(j.type==='future'?'selected':'')+'>Future</option></select></div><div class="field"><label>Description</label><textarea id="editJDesc">'+esc(j.desc||'')+'</textarea></div><button class="btn" style="width:100%" onclick="saveJourneyEdit(\''+id+'\')">Save changes</button><button class="btn danger" style="width:100%;margin-top:8px" onclick="deleteJourneyEvent(\''+id+'\');closeSheet()">Delete</button><button class="btn ghost" style="width:100%;margin-top:8px" onclick="closeSheet()">Cancel</button>'));
+}
+async function journeyPhoto(input){const file=input.files&&input.files[0];if(!file)return;try{const bmp=await createImageBitmap(file),max=1400,scale=Math.min(1,max/bmp.width,max/bmp.height),c=document.createElement('canvas');c.width=Math.max(1,Math.round(bmp.width*scale));c.height=Math.max(1,Math.round(bmp.height*scale));c.getContext('2d').drawImage(bmp,0,0,c.width,c.height);journeyPhotoData=c.toDataURL('image/jpeg',.78);const p=document.getElementById('journeyPreview');if(p){p.src=journeyPhotoData;p.classList.remove('hidden')}}catch(e){toast('Could not read that photo')}}
+async function addJourneyEvent(){
+  const t=document.getElementById('jTitle').value.trim();if(!t)return toast('Add a title');
+  const id=crypto.randomUUID(),date=document.getElementById('jDate').value||todayKey(),type=document.getElementById('jType').value,desc=document.getElementById('jDesc').value.trim(),photoData=journeyPhotoData||'',coupleId=s.connected&&s.partner?.coupleId?s.partner.coupleId:null;
+  const row={id,title:t,date,type,desc,photo:photoData,createdBy:s.profile.id,ownerUserId:s.profile.id};s.journey.push(row);
+  if(sb&&s.auth){
+    const err=await cloudUpsert('journey_events',{id,owner_user_id:s.profile.id,created_by:s.profile.id,couple_id:coupleId,title:t,event_date:date,time_position:type,description:desc,photo_url:null});
+    if(err){s.journey=s.journey.filter(x=>x.id!==id);journeyPhotoData='';save();closeSheet();render();return}
+    if(photoData){try{const path=(coupleId||s.profile.id)+'/'+id+'.jpg',blob=await (await fetch(photoData)).blob(),up=await sb.storage.from('journey-media').upload(path,blob,{contentType:'image/jpeg',upsert:true});if(up.error)toast('Event saved, but photo upload failed');else{const mediaErr=await cloudUpsert('journey_media',{journey_event_id:id,owner_user_id:s.profile.id,storage_path:path});if(!mediaErr){const signed=await sb.storage.from('journey-media').createSignedUrl(path,60*60*24*30);if(signed.data?.signedUrl)row.photo=signed.data.signedUrl}}}catch(e){toast('Event saved, but photo upload failed')}}
+  }
+  journeyPhotoData='';save();closeSheet();render();toast('Journey updated');
+}
+function addJourney(){journeyPhotoData='';openSheet(modal('Add journey event','<div class="field"><label>What happened?</label><input id="jTitle" placeholder="A meaningful milestone"></div><div class="field"><label>Date</label><input id="jDate" type="date" value="'+todayKey()+'"></div><div class="field"><label>Time position</label><select id="jType"><option value="past">Past</option><option value="present">Present</option><option value="future">Future</option></select></div><div class="field"><label>Description</label><textarea id="jDesc" placeholder="What do you want to remember?"></textarea></div><div class="field"><label>Photo <span class="muted">(optional)</span></label><input type="file" accept="image/*" onchange="journeyPhoto(this)"><img id="journeyPreview" class="photoPreview hidden" alt="Photo preview"></div><button class="btn" style="width:100%" onclick="addJourneyEvent()">Add event</button>'))}
+function milestoneLabel(m){
+  if(m.kind==='birthday')return m.targetUserId===s.profile.id?'My Birthday':m.targetUserId===s.partner?.id?'Her Birthday':'Birthday';
+  if(m.kind==='day_we_met')return 'Day We Met';
+  return m.title||'Remembered date';
+}
+function milestoneNextDate(date,repeatYearly){
+  const base=new Date((date||todayKey())+'T00:00:00'),now=new Date();if(!repeatYearly)return base;
+  let next=new Date(now.getFullYear(),base.getMonth(),base.getDate());if(next<new Date(now.getFullYear(),now.getMonth(),now.getDate()))next.setFullYear(next.getFullYear()+1);return next;
+}
+function milestoneDaysAway(date,repeatYearly){const next=milestoneNextDate(date,repeatYearly),today=new Date();today.setHours(0,0,0,0);return Math.round((next-today)/86400000)}
+function startMilestoneHold(e,id){if(e.pointerType==='mouse'&&e.button!==0)return;clearMilestoneHold();milestoneHoldTimer=setTimeout(function(){openMilestoneActions(id)},550)}
+function clearMilestoneHold(){if(milestoneHoldTimer){clearTimeout(milestoneHoldTimer);milestoneHoldTimer=null}}
+function openMilestoneActions(id){
+  clearMilestoneHold();const m=(s.journeyMilestones||[]).find(x=>x.id===id);if(!m)return;
+  openSheet(modal('Remembered date','<div class="milestoneAction"><div class="milestoneCircle">'+esc(m.icon)+'</div><div><strong>'+esc(milestoneLabel(m))+'</strong><div class="muted">'+esc(m.date)+'</div></div></div><button class="btn" style="width:100%" onclick="editMilestone(\''+id+'\')">Edit</button><button class="btn danger" style="width:100%;margin-top:8px" onclick="deleteMilestone(\''+id+'\')">Delete</button><button class="btn ghost" style="width:100%;margin-top:8px" onclick="closeSheet()">Cancel</button>'));
+}
+function selectMilestoneKind(kind,targetId){
+  const input=document.getElementById('milestoneKind');if(input)input.value=kind;
+  const target=document.getElementById('milestoneTarget');if(target)target.value=targetId||'';
+  document.querySelectorAll('.milestoneChoice').forEach(x=>x.classList.remove('selected'));
+  const sel=document.querySelector('.milestoneChoice[data-kind="'+kind+'"][data-target="'+(targetId||'')+'"]')||document.querySelector('.milestoneChoice[data-kind="'+kind+'"]');if(sel)sel.classList.add('selected');
+  const wrap=document.getElementById('milestoneTitleWrap');if(wrap)wrap.classList.toggle('hidden',kind!=='custom');
+}
+function addMilestone(){
+  openSheet(modal('Remembered date','<p class="muted">Pick a date, give it a word, and choose an icon.</p><div class="field"><label>Label</label><input id="milestoneTitle" placeholder="Her Birthday, Day We Met, Eid…"></div><div class="field"><label>Date</label><input id="milestoneDate" type="date" value="'+todayKey()+'"></div><div class="field"><label>Icon</label><select id="milestoneIcon"><option>🎂</option><option>🤝</option><option>🌙</option><option>⭐</option><option>🌱</option><option>💍</option><option>🕌</option><option>💰</option></select></div><div class="row"><span>Repeat every year</span><button class="toggle on" id="milestoneRepeat" onclick="this.classList.toggle(\'on\')"><i></i></button></div><button class="btn" style="width:100%;margin-top:14px" onclick="saveMilestone()">Save date</button><button class="btn ghost" style="width:100%;margin-top:8px" onclick="closeSheet()">Cancel</button>'));
+}
+async function saveMilestone(){
+  if(!s.connected||!s.partner?.coupleId)return toast('Connect first');
+  const title=document.getElementById('milestoneTitle')?.value.trim()||'',date=document.getElementById('milestoneDate')?.value||'',icon=document.getElementById('milestoneIcon')?.value||'★',repeat=document.getElementById('milestoneRepeat')?.classList.contains('on');
+  if(!title||!date)return toast('Add a label and date');
+  const id=crypto.randomUUID(),err=await cloudUpsert('journey_milestones',{id,couple_id:s.partner.coupleId,created_by:s.profile.id,kind:'custom',target_user_id:null,title,milestone_date:date,icon,repeat_yearly:repeat});if(err)return;
+  s.journeyMilestones=[{id,coupleId:s.partner.coupleId,createdBy:s.profile.id,kind:'custom',title,date,icon,repeatYearly:repeat,targetUserId:''},...(s.journeyMilestones||[])];save();closeSheet();render();toast('Remembered date added ✓');
+}
+function editMilestone(id){
+  const m=(s.journeyMilestones||[]).find(x=>x.id===id);if(!m)return;
+  openSheet(modal('Edit remembered date','<div class="field"><label>Name</label><input id="editMilestoneTitle" value="'+esc(m.title||'')+'"></div><div class="field"><label>Date</label><input id="editMilestoneDate" type="date" value="'+esc(m.date||todayKey())+'"></div><div class="field"><label>Icon</label><select id="editMilestoneIcon"><option '+(m.icon==='🎂'?'selected':'')+'>🎂</option><option '+(m.icon==='🤝'?'selected':'')+'>🤝</option><option '+(m.icon==='🌙'?'selected':'')+'>🌙</option><option '+(m.icon==='⭐'?'selected':'')+'>⭐</option><option '+(m.icon==='🌱'?'selected':'')+'>🌱</option><option '+(m.icon==='♥'?'selected':'')+'>♥</option></select></div><div class="row"><span>Repeat every year</span><button class="toggle '+(m.repeatYearly?'on':'')+'" id="editMilestoneRepeat" onclick="this.classList.toggle(\'on\')"><i></i></button></div><button class="btn" style="width:100%;margin-top:14px" onclick="saveMilestoneEdit(\''+id+'\')">Save changes</button><button class="btn danger" style="width:100%;margin-top:8px" onclick="deleteMilestone(\''+id+'\')">Delete</button><button class="btn ghost" style="width:100%;margin-top:8px" onclick="closeSheet()">Cancel</button>'));
+}
+async function saveMilestoneEdit(id){
+  const m=(s.journeyMilestones||[]).find(x=>x.id===id);if(!m)return;
+  const title=document.getElementById('editMilestoneTitle')?.value.trim()||'Remembered date',date=document.getElementById('editMilestoneDate')?.value||m.date,icon=document.getElementById('editMilestoneIcon')?.value||m.icon,repeat=document.getElementById('editMilestoneRepeat')?.classList.contains('on');
+  const err=await cloudUpsert('journey_milestones',{id,couple_id:m.coupleId,created_by:m.createdBy,kind:m.kind,target_user_id:m.targetUserId||null,title,milestone_date:date,icon,repeat_yearly:repeat});if(err)return;
+  Object.assign(m,{title,date,icon,repeatYearly:repeat});save();closeSheet();render();toast('Remembered date updated ✓');
+}
+async function deleteMilestone(id){
+  const err=await cloudDelete('journey_milestones',id);if(err)return;s.journeyMilestones=(s.journeyMilestones||[]).filter(x=>x.id!==id);save();closeSheet();render();toast('Remembered date deleted');
+}
+async function need(){if(!s.connected||!s.partner?.id||!s.partner?.coupleId)return toast('Connect first');const id=crypto.randomUUID(),now=new Date().toISOString();if(sb&&s.auth){const err=await cloudUpsert('need_you_requests',{id,couple_id:s.partner.coupleId,sender_id:s.profile.id,recipient_id:s.partner.id,status:'sent',message:'I Need You'});if(err)return;const push=await sb.functions.invoke('send-push',{body:{type:'need_you',recipient_id:s.partner.id,message:'I Need You'}});if(push.error)toast('Signal saved, but push notification failed')}s.needSentAt=now;s.notifications.unshift({id,text:s.profile.name+' needs you',date:now,status:'sent'});save();render();toast('I Need You signal sent')}
+async function createNote(){
+  const t=document.getElementById('noteTitle').value.trim();if(!t)return;const body=document.getElementById('noteBody').value,id=crypto.randomUUID(),err=await cloudUpsert('notes',{id,user_id:s.profile.id,title:t,body});if(err)return;s.notes.unshift({id,title:t,body,date:new Date().toISOString()});save();closeSheet();render();toast('Note saved');
+}
+async function deleteNote(id){
+  if(!confirm('Delete this note?'))return;const err=await cloudDelete('notes',id);if(err)return;s.notes=s.notes.filter(n=>n.id!==id);save();render();toast('Note deleted');
+}
+function addNote(){openSheet(modal('New note',`<div class="field"><label>Title</label><input id="noteTitle"></div><div class="field"><label>Note</label><textarea id="noteBody"></textarea></div><button class="btn" style="width:100%" onclick="createNote()">Save note</button>`))}
+async function saveReflection(){const content={good:document.getElementById('r1')?.value||'',improve:document.getElementById('r2')?.value||'',grateful:document.getElementById('r3')?.value||''},id=crypto.randomUUID(),err=await cloudUpsert('reflections',{id,user_id:s.profile.id,reflection_date:todayKey(),content:JSON.stringify(content)});if(err)return;s.reflections.unshift({id,date:todayKey(),...content});save();closeSheet();render();toast('Reflection saved')}
+function reflect(){openSheet(modal('Daily reflection',`<div class="field"><label>What went well?</label><textarea id="r1"></textarea></div><div class="field"><label>What could improve?</label><textarea id="r2"></textarea></div><div class="field"><label>What are you grateful for?</label><textarea id="r3"></textarea></div><button class="btn" style="width:100%" onclick="saveReflection()">Save reflection</button>`))}
+function search(){s.search=document.getElementById('searchInput')?.value||'';save();render();requestAnimationFrame(()=>{let i=document.getElementById('searchInput');if(i){i.focus();i.setSelectionRange(i.value.length,i.value.length)}})}
+function reset(){if(confirm('Reset all local demo data?')){s=clone(fresh);save();render();toast('Demo reset')}}
+function exportData(){const blob=new Blob([JSON.stringify(s,null,2)],{type:'application/json'}),a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download='amanah-my-data.json';a.click();URL.revokeObjectURL(a.href)}
+async function finishOnboarding(){
+  s.tour=true;save();render();
+  if(sb&&s.auth){
+    const {error}=await sb.from('profiles').update({tour_completed:true,updated_at:new Date().toISOString()}).eq('id',s.profile.id);
+    if(error)toast('Onboarding could not sync: '+error.message);
+  }
+}
+function onboarding(){return `<main class="page"><section class="card center" style="margin-top:20vh"><div class="brand">أمانة</div><p class="muted">Your space for growth, Deen, learning, and the future you’re building.</p><button class="btn" style="width:100%" onclick="finishOnboarding()">Get started</button><button class="btn ghost" style="width:100%;margin-top:8px" onclick="login()">I already have an account</button></section></main>`}
+function syncLabel(){return navigator.onLine===false?'Offline':'Synced'}
+function header(){return `<header class="top"><button class="profileMini" onclick="profile()">${avatar(s.profile.name,s.profile.avatar)}</button><div class="brand appBrand"><img src="./icon-v2.svg" alt="" aria-hidden="true"><span dir="rtl">أمانة</span></div>${s.screen==='home'?'<span class="syncBadge">'+syncLabel()+'</span>':''}<button class="icon" onclick="go('settings')">⚙</button></header>`}
+function home(){
+  let p=pct(),hour=new Date().getHours(),hello=hour<12?'morning':hour<18?'afternoon':'evening';
+  let habits=s.habits.map(function(x){let done=doneOn('habit',x.id);return '<div class="listBtn '+(done?'item done':'')+'" style="margin-top:10px" onpointerdown="startHabitHold(event,\''+x.id+'\')" onpointerup="clearHabitHold()" onpointerleave="clearHabitHold()" onpointercancel="clearHabitHold()"><div class="row"><button style="background:transparent;padding:0;text-align:left;flex:1" onclick="toggleHabitFromHome(event,\''+x.id+'\')"><div><strong>'+esc(x.name)+'</strong><div class="muted"><span class="streakBadge" onclick="event.stopPropagation();openStreak(\''+x.id+'\')" title="Open streak"><span>🔥</span> '+streakFor(x.id)+' day streak · '+streakMilestone(streakFor(x.id))+'</span></div></div></button><span class="check '+(done?'done':'')+'" onclick="toggleHabitFromHome(event,\''+x.id+'\')"></span></div></div>'}).join('');
+  let tasks=s.tasks.map(function(x){let done=doneOn('task',x.id);return '<div class="listBtn '+(done?'item done':'')+'" style="margin-top:10px"><div class="row"><button style="background:transparent;padding:0;text-align:left;flex:1" onclick="toggleItem(\'tasks\',\''+x.id+'\')"><div><strong>'+esc(x.title)+'</strong><div class="muted">'+esc(x.date||'Today')+'</div></div></button><span class="check '+(done?'done':'')+'" onclick="toggleItem(\'tasks\',\''+x.id+'\')"></span><button class="icon" title="Delete task" onclick="event.stopPropagation();deleteTask(\''+x.id+'\')">×</button></div></div>'}).join('');
+  return '<main class="page"><div class="muted">'+new Date().toLocaleDateString(undefined,{weekday:'long',month:'long',day:'numeric'})+'</div><div class="greeting">Good '+hello+(s.profile.name?', '+esc(s.profile.name):'')+'.</div><div class="muted">Let’s make today count.</div><section class="card"><div class="row"><strong>Today’s reminder</strong><span>♡</span></div><div style="margin-top:10px;font-size:16px;line-height:1.6">'+esc(dailyLoveReminder())+'</div><div class="muted small" style="margin-top:8px">A daily reminder to keep growing with purpose.</div></section><section class="card"><div class="row"><strong>Progress</strong><span class="pill">'+p+'%</span></div><div style="margin-top:16px;display:flex;align-items:flex-end;gap:7px;height:92px">'+[6,5,4,3,2,1,0].map(function(i){let d=new Date();d.setDate(d.getDate()-i);let k=localDateKey(d),v=s.habits.filter(x=>doneOn('habit',x.id,k)).length+s.tasks.filter(x=>doneOn('task',x.id,k)).length;return '<div style="flex:1;height:'+Math.max(8,Math.min(100,v*22))+'%;background:var(--soft);border-radius:7px 7px 3px 3px" title="'+esc(d.toLocaleDateString(undefined,{weekday:'short'}))+'"></div>'}).join('')+'</div><div class="muted small" style="margin-top:8px">Last 7 days</div></section><section class="card"><div class="row"><strong>Today’s habits</strong><button class="btn secondary" onclick="addHabit()">+ Add</button></div>'+(s.habits.length?habits:'<div class="empty">No habits yet. Add the first one.</div>')+'</section><section class="card"><div class="row"><strong>Tasks</strong><button class="btn secondary" onclick="addTask()">+ Add</button></div>'+(s.tasks.length?tasks:'<div class="empty">No tasks yet.</div>')+'</section><section class="card" onclick="go(\'deen\')"><div class="row"><strong>Deen</strong><span class="pill">'+s.dhikr+'/400</span></div><div class="muted" style="margin-top:6px">Dhikr · Prayer reminders · 365-day Hadith</div></section><section class="card" onclick="go(\'us\')"><strong>Us</strong><div class="muted">'+(s.connected&&s.partner?'Connected with '+esc(s.partner.name)+' · Growing separately. Growing together.':'Your shared space is ready when you connect.')+'</div></section></main>';
+}
+function progress(){
+  const now=new Date(),habitTotal=s.habits.length,taskTotal=s.tasks.length,todayHabits=s.habits.filter(x=>doneOn('habit',x.id)).length,todayTasks=s.tasks.filter(x=>doneOn('task',x.id)).length,todayTotal=habitTotal+taskTotal,todayDone=todayHabits+todayTasks;
+  const weekKeys=[];for(let i=0;i<7;i++){let d=new Date();d.setDate(d.getDate()-i);weekKeys.push(localDateKey(d))}
+  const weekDone=weekKeys.reduce((sum,k)=>sum+s.habits.filter(x=>doneOn('habit',x.id,k)).length+s.tasks.filter(x=>doneOn('task',x.id,k)).length,0),weekPossible=weekKeys.length*(habitTotal+taskTotal);
+  const goalAvg=s.goals.length?Math.round(s.goals.reduce((a,g)=>a+(+g.progress||0),0)/s.goals.length):0;
+  let days=[],start=new Date(now.getFullYear(),now.getMonth(),1).getDay(),total=new Date(now.getFullYear(),now.getMonth()+1,0).getDate();for(let i=0;i<start;i++)days.push('<div></div>');
+  for(let d=1;d<=total;d++){let date=new Date(now.getFullYear(),now.getMonth(),d),key=localDateKey(date),active=s.habits.some(h=>doneOn('habit',h.id,key))||s.tasks.some(t=>doneOn('task',t.id,key));days.push('<div class="calDay '+(d===now.getDate()?'today':'')+'"><strong>'+d+'</strong>'+(active?'<div class="dot"></div>':'')+'</div>')}
+  const streakRows=(s.habits||[]).map(function(h){
+    const n=streakFor(h.id),best=bestStreakFor(h.id),candidate=streakRestoreCandidate(h.id);
+    return '<section class="streakRow '+(candidate?'recentBreak':'')+'"><div class="row"><div><span class="streakNumber">🔥 '+n+'</span><div class="streakName">'+esc(h.name)+'</div><div class="streakSub">Best '+best+' · '+streakMilestone(n)+(candidate?' · recent break':'')+'</div></div><div class="streakActions">'+(candidate?'<button class="restoreBtn" onclick="restoreStreak(\''+h.id+'\')">Restore</button>':'<button class="restoreBtn" onclick="openStreak(\''+h.id+'\')">Open</button>')+'</div></div></section>';
+  }).join('')||'<div class="empty">Complete a habit today to start a streak.</div>';
+  const streakSection='<section class="card"><div class="row"><div><strong>Streaks</strong><div class="muted">Daily runs for your habits, with a recent-break restore.</div></div><span class="pill">'+streakRestoresLeft()+' restores</span></div><div class="streakGrid">'+streakRows+'</div></section>';
+  const goals=s.goals.map(g=>'<button class="listBtn" style="margin-top:10px" onclick="editGoal(\''+g.id+'\')"><div class="row"><span>'+esc(g.title)+'</span><span>'+(g.progress||0)+'%</span></div><div class="progress" style="margin-top:8px"><i style="width:'+Math.max(0,Math.min(100,g.progress||0))+'%"></i></div></button>').join(''),achievements=s.achievements||[];
+  return '<main class="page"><h1>Progress</h1><section class="card"><div class="grid2"><div><div class="muted">Today</div><strong>'+todayDone+'/'+todayTotal+'</strong><div class="muted small">tasks + habits</div></div><div><div class="muted">This week</div><strong>'+weekDone+'/'+weekPossible+'</strong><div class="muted small">completions</div></div></div><div class="progress" style="margin-top:12px"><i style="width:'+pct()+'%"></i></div><div class="row" style="margin-top:8px"><span class="muted">Today completion</span><span class="pill">'+pct()+'%</span></div></section><section class="card"><div class="grid2"><div><div class="muted">Goal average</div><strong>'+goalAvg+'%</strong></div><div><div class="muted">Unlocked</div><strong>'+achievements.length+'</strong><div class="muted small">achievements</div></div></div></section><section class="card"><h2 style="margin-top:0">'+now.toLocaleString(undefined,{month:'long',year:'numeric'})+'</h2><div class="calendarGrid">'+days.join('')+'</div><div class="muted small" style="margin-top:8px">A dot means you completed at least one habit or task.</div></section>'+streakSection+'<section class="card"><strong>Goals</strong>'+(goals||'<div class="empty">Create a goal to see it here.</div>')+'</section><section class="card"><strong>Daily reflection</strong><div class="muted">'+(s.reflections?.length?'Last saved on '+esc(s.reflections[0].date):'Write one to keep a record of your days.')+'</div><button class="btn secondary" style="margin-top:10px" onclick="reflect()">+ Reflection</button></section></main>';
+}
+function deen(){
+  const total=s.dhikr,q=(s.quranGoals&&s.quranGoals[0])||null,h=s.dailyHadith||s.hadithCourse?.[0],hday=h?.course_day||1,learned=h?.id&&(s.hadithLearned||[]).includes(h.id);
+  return '<main class="page"><h1>Deen</h1><section class="card" onclick="prayer()"><div class="row"><div><strong>Prayer reminders</strong><div class="muted">Fajr · Dhuhr · Asr · Maghrib · Isha</div></div><span>⏰</span></div></section><section class="card" onclick="dhikr()"><div class="row"><div><strong>Dhikr</strong><div class="muted">Four daily adhkar</div></div><span class="pill">'+total+'/400</span></div><div style="margin-top:12px" class="progress"><i style="width:'+Math.min(100,total/4)+'%"></i></div></section><section class="card" onclick="hadith()"><div class="row"><span class="pill">Today’s Hadith · Day '+hday+'</span><span class="pill">'+(learned?'Learned':'New')+'</span></div><h2>'+(esc(h?.english||'Today’s hadith'))+'</h2><div class="muted">'+esc(h?.reference||'Sahih collection')+'</div></section><section class="card" onclick="quranGoal()"><div class="row"><strong>Qur’an goal</strong><span>'+(q?q.progress:0)+'%</span></div><div class="muted">'+esc(q?q.title:'Set a Qur’an goal')+'</div></section><section class="card" onclick="challenge()"><strong>Deen Challenge</strong><div class="muted">Islamic scenarios based on what you’ve learned.</div></section></main>';
+}
+async function saveQuranGoal(){const title=document.getElementById('quranTitle').value.trim();if(!title)return;const progress=+document.getElementById('quranProgress').value||0;const id=(s.quranGoals&&s.quranGoals[0]?.id)||crypto.randomUUID();const err=await cloudUpsert('quran_goals',{id,user_id:s.profile.id,title,target:'',progress});if(err)return;s.quranGoals=[{id,title,target:'',progress}];save();closeSheet();render();toast('Qur’an goal saved')}
+function quranGoal(){const q=(s.quranGoals&&s.quranGoals[0])||{title:'',progress:0};openSheet(modal('Qur’an goal',`<div class="field"><label>Goal</label><input id="quranTitle" value="${esc(q.title)}" placeholder="Read Qur’an consistently"></div><div class="field"><label>Progress: <span id="quranPv">${q.progress}</span>%</label><input id="quranProgress" type="range" min="0" max="100" value="${q.progress}" oninput="document.getElementById('quranPv').textContent=this.value"></div><button class="btn" style="width:100%" onclick="saveQuranGoal()">Save goal</button>`))}
+async function hydrateQuranUs(){
+  if(!sb||!s.auth||!s.connected||!s.partner?.coupleId)return;
+  const date=todayKey(),start=new Date();start.setDate(start.getDate()-365),monthStart=new Date(new Date().getFullYear(),new Date().getMonth(),1);
+  const [daily,progress,ayahs,restores]=await Promise.all([
+    sb.from('quran_muraajaah_daily').select('*').eq('couple_id',s.partner.coupleId).eq('quran_date',date).maybeSingle(),
+    sb.from('quran_muraajaah_progress').select('*').eq('couple_id',s.partner.coupleId).gte('quran_date',localDateKey(start)).order('quran_date',{ascending:false}),
+    sb.from('quran_ayah_notes').select('*').eq('couple_id',s.partner.coupleId).order('created_at',{ascending:false}).limit(50),
+    sb.from('quran_muraajaah_restores').select('id',{count:'exact',head:true}).eq('user_id',s.profile.id).gte('created_at',monthStart.toISOString())
+  ]);
+  if(!daily.error)s.quranUsDaily=daily.data||{couple_id:s.partner.coupleId,quran_date:date,target_pages:3};else toast('Could not load today’s Qur’an target: '+daily.error.message);
+  if(!progress.error)s.quranUsProgress=progress.data||[];else toast('Could not load Qur’an progress: '+progress.error.message);
+  if(!ayahs.error)s.quranUsAyahs=ayahs.data||[];else toast('Could not load meaningful ayahs: '+ayahs.error.message);
+  s.quranMuraajaahRestoresUsed=restores.error?0:(restores.count||0);
+  save();
+  if(s.screen==='quranTogether')render();
+}
+async function ensureQuranDaily(date=todayKey()){
+  if(!sb||!s.auth||!s.connected||!s.partner?.coupleId)return false;
+  const row={id:crypto.randomUUID(),couple_id:s.partner.coupleId,quran_date:date,target_pages:3},r=await sb.from('quran_muraajaah_daily').upsert(row,{onConflict:'couple_id,quran_date'});
+  if(r.error){toast('Could not create Qur’an target: '+r.error.message);return false}
+  if(date===todayKey())s.quranUsDaily=Object.assign({target_pages:3},s.quranUsDaily||{},row,{couple_id:s.partner.coupleId,quran_date:date,target_pages:3});
+  return true;
+}
+function quranStreakFor(userId){
+  const done=new Set((s.quranUsProgress||[]).filter(x=>x.user_id===userId&&x.pages_completed===3).map(x=>x.quran_date));let d=new Date();
+  if(!done.has(localDateKey(d)))d.setDate(d.getDate()-1);
+  let n=0;for(let i=0;i<800;i++){const key=localDateKey(d);if(!done.has(key))break;n++;d.setDate(d.getDate()-1)}return n;
+}
+function quranBestStreakFor(userId){
+  const done=[...new Set((s.quranUsProgress||[]).filter(x=>x.user_id===userId&&x.pages_completed===3).map(x=>x.quran_date))].sort();let best=0,run=0,prev=null;
+  done.forEach(k=>{const d=new Date(k+'T00:00:00');if(prev&&Math.round((d-prev)/86400000)===1)run++;else run=1;if(run>best)best=run;prev=d});return best;
+}
+function quranStreakRestoresLeft(){return Math.max(0,3-(s.quranMuraajaahRestoresUsed||0))}
+function quranStreakDayStrip(userId){
+  const done=new Set((s.quranUsProgress||[]).filter(x=>x.user_id===userId&&x.pages_completed===3).map(x=>x.quran_date));let out='<div class="streakDays">';
+  for(let i=6;i>=0;i--){let d=new Date();d.setDate(d.getDate()-i);let k=localDateKey(d);out+='<div class="streakDay '+(done.has(k)?'done':'')+'"><span>'+d.toLocaleDateString(undefined,{weekday:'short'}).slice(0,1)+'</span><i></i></div>'}
+  return out+'</div>';
+}
+async function restoreQuranMuraajaah(){
+  if(!sb||!s.auth||!s.connected||!s.partner?.coupleId)return toast('Connect first');
+  if(quranStreakRestoresLeft()<=0)return toast('No Qur’an restores left this month');
+  const d=new Date();d.setDate(d.getDate()-1);const missed=localDateKey(d);
+  if((s.quranUsProgress||[]).some(x=>x.user_id===s.profile.id&&x.quran_date===missed&&x.pages_completed===3))return toast('Your Qur’an streak is already safe');
+  const before=new Date(d);before.setDate(d.getDate()-1);const beforeKey=localDateKey(before);
+  if(!(s.quranUsProgress||[]).some(x=>x.user_id===s.profile.id&&x.quran_date===beforeKey&&x.pages_completed===3))return toast('No recent broken Qur’an streak to restore');
+  if(!await ensureQuranDaily(missed))return;
+  const ins=await sb.from('quran_muraajaah_restores').insert({id:crypto.randomUUID(),couple_id:s.partner.coupleId,user_id:s.profile.id,restored_date:missed}).select('id').single();
+  if(ins.error)return toast(ins.error.code==='23505'?'That day is already restored':'Qur’an restore failed: '+ins.error.message);
+  const now=new Date().toISOString(),row={couple_id:s.partner.coupleId,quran_date:missed,user_id:s.profile.id,pages_completed:3,completed_at:now,updated_at:now};
+  const prog=await sb.from('quran_muraajaah_progress').upsert(row,{onConflict:'couple_id,quran_date,user_id'});
+  if(prog.error){await sb.from('quran_muraajaah_restores').delete().eq('id',ins.data?.id);return toast('Could not save restored Qur’an progress: '+prog.error.message)}
+  s.quranUsProgress=[...(s.quranUsProgress||[]).filter(x=>!(x.user_id===s.profile.id&&x.quran_date===missed)),row];
+  s.quranMuraajaahRestoresUsed=(s.quranMuraajaahRestoresUsed||0)+1;save();render();toast('🔥 Qur’an streak restored • '+quranStreakRestoresLeft()+' left');
+}
+async function toggleQuranMuraajaah(){
+  if(!sb||!s.auth)return toast('Sign in to use shared Qur’an');
+  if(!s.connected||!s.partner?.coupleId)return toast('Connect first');
+  if(!await ensureQuranDaily())return;
+  const date=todayKey(),coupleId=s.partner.coupleId,current=await sb.from('quran_muraajaah_progress').select('*').eq('couple_id',coupleId).eq('quran_date',date).eq('user_id',s.profile.id).maybeSingle();
+  if(current.error)return toast('Could not read your Qur’an progress: '+current.error.message);
+  const done=current.data?.pages_completed===3,now=new Date().toISOString(),row={couple_id:coupleId,quran_date:date,user_id:s.profile.id,pages_completed:done?0:3,completed_at:done?null:now,updated_at:now};
+  const result=current.data?await sb.from('quran_muraajaah_progress').update({pages_completed:row.pages_completed,completed_at:row.completed_at,updated_at:row.updated_at}).eq('couple_id',coupleId).eq('quran_date',date).eq('user_id',s.profile.id):await sb.from('quran_muraajaah_progress').insert(row);
+  if(result.error)return toast('Could not save Qur’an progress: '+result.error.message);
+  s.quranUsProgress=[...(s.quranUsProgress||[]).filter(x=>!(x.user_id===s.profile.id&&x.quran_date===date)),...(row.pages_completed===3?[row]:[])];
+  save();render();toast(row.pages_completed===3?'3 pages completed ✓':'Marked incomplete');
+}
+function openQuranStreak(userId){
+  const mine=userId===s.profile.id,name=mine?(s.profile.name||'You'):(s.partner?.name||'Her'),current=quranStreakFor(userId),best=quranBestStreakFor(userId),candidate=mine?quranRestoreCandidate():null,left=quranStreakRestoresLeft();
+  const body='<div class="streakHero"><div><div class="eyebrow">CURRENT STREAK</div><div class="heroStreak"><span class="streakFire active">🔥</span> '+current+' day'+(current===1?'':'s')+'</div><div class="muted">'+esc(name)+'</div></div><div class="streakHeroIcon">🔥</div></div><div class="streakStats"><div><strong>'+best+'</strong><span>Best</span></div><div><strong>'+left+'</strong><span>Restores</span></div><div><strong>3 pages</strong><span>Daily</span></div></div>'+quranStreakDayStrip(userId)+(mine?(candidate&&left>0?'<button class="btn" style="width:100%;margin-top:14px" onclick="restoreQuranMuraajaah()">Restore yesterday</button>':'<button class="btn secondary" style="width:100%;margin-top:14px" disabled>'+(left?'No recent break to restore':'No restores left this month')+'</button>'):'<div class="muted small center" style="margin-top:14px">Her streak is shared for visibility. She manages her own restore.</div>');
+  openSheet(modal('Qur’an streak',body));
+}
+function openQuranTogether(){s.screen='quranTogether';save();render();ensureQuranDaily().then(()=>hydrateQuranUs())}
+function startAyahHold(e,id){if(e.pointerType==='mouse'&&e.button!==0)return;ayahHoldTriggered=false;clearAyahHold();ayahHoldTimer=setTimeout(function(){ayahHoldTriggered=true;openAyahActions(id)},550)}
+function clearAyahHold(){if(ayahHoldTimer){clearTimeout(ayahHoldTimer);ayahHoldTimer=null}}
+function openAyahActions(id){
+  clearAyahHold();const a=(s.quranUsAyahs||[]).find(x=>x.id===id);if(!a)return;
+  if(a.created_by!==s.profile.id)return openSheet(modal('Meaningful ayah','<div class="muted">'+esc(a.surah)+' · '+esc(a.ayah)+'</div><p>Only the person who saved this ayah can edit or delete it.</p><button class="btn ghost" style="width:100%" onclick="closeSheet()">Cancel</button>'));
+  openSheet(modal('Meaningful ayah','<div class="muted" style="margin-bottom:14px">'+esc(a.surah)+' · '+esc(a.ayah)+'</div><button class="btn" style="width:100%" onclick="editMeaningfulAyah(\''+id+'\')">Edit</button><button class="btn danger" style="width:100%;margin-top:8px" onclick="deleteMeaningfulAyah(\''+id+'\')">Delete</button><button class="btn ghost" style="width:100%;margin-top:8px" onclick="closeSheet()">Cancel</button>'));
+}
+function editMeaningfulAyah(id){
+  const a=(s.quranUsAyahs||[]).find(x=>x.id===id);if(!a)return;
+  openSheet(modal('Edit meaningful ayah','<div class="field"><label>Surah</label><input id="editAyahSurah" value="'+esc(a.surah)+'"></div><div class="field"><label>Ayah number</label><input id="editAyahNumber" type="number" min="1" value="'+esc(a.ayah)+'"></div><div class="field"><label>Arabic</label><textarea id="editAyahArabic">'+esc(a.arabic)+'</textarea></div><div class="field"><label>Translation</label><textarea id="editAyahTranslation">'+esc(a.translation)+'</textarea></div><div class="field"><label>Why it was meaningful</label><textarea id="editAyahNote">'+esc(a.note||'')+'</textarea></div><button class="btn" style="width:100%" onclick="saveMeaningfulAyahEdit(\''+id+'\')">Save changes</button><button class="btn ghost" style="width:100%;margin-top:8px" onclick="closeSheet()">Cancel</button>'));
+}
+async function saveMeaningfulAyahEdit(id){
+  const a=(s.quranUsAyahs||[]).find(x=>x.id===id);if(!a||a.created_by!==s.profile.id)return;
+  const surah=document.getElementById('editAyahSurah')?.value.trim()||'',ayah=+(document.getElementById('editAyahNumber')?.value||0),arabic=document.getElementById('editAyahArabic')?.value.trim()||'',translation=document.getElementById('editAyahTranslation')?.value.trim()||'',note=document.getElementById('editAyahNote')?.value.trim()||'';
+  if(!surah||!ayah||!arabic||!translation)return toast('Add the reference, Arabic and translation');
+  const r=await sb.from('quran_ayah_notes').update({surah,ayah,arabic,translation,note,updated_at:new Date().toISOString()}).eq('id',id).eq('created_by',s.profile.id);if(r.error)return toast('Could not update ayah: '+r.error.message);
+  Object.assign(a,{surah,ayah,arabic,translation,note});save();closeSheet();render();toast('Ayah updated ✓');
+}
+async function deleteMeaningfulAyah(id){
+  const a=(s.quranUsAyahs||[]).find(x=>x.id===id);if(!a||a.created_by!==s.profile.id)return;
+  closeSheet();if(!confirm('Delete this meaningful ayah?'))return;
+  const r=await sb.from('quran_ayah_notes').delete().eq('id',id).eq('created_by',s.profile.id);if(r.error)return toast('Could not delete ayah: '+r.error.message);
+  s.quranUsAyahs=s.quranUsAyahs.filter(x=>x.id!==id);save();render();toast('Ayah deleted');
+}
+function quranUsAyahCountPlaceholder(){
+  const ayahs=s.quranUsAyahs||[];if(!ayahs.length)return '<div class="empty">Nothing saved yet.</div>';
+  return '<div class="stack" style="margin-top:12px">'+ayahs.map(a=>'<section class="quranUsAyah" onpointerdown="startAyahHold(event,\''+a.id+'\')" onpointerup="clearAyahHold()" onpointerleave="clearAyahHold()" onpointercancel="clearAyahHold()"><div class="quranUsRef">'+esc(a.surah)+' · '+esc(a.ayah)+'</div><p class="quranUsArabic" dir="rtl">'+esc(a.arabic)+'</p><div>'+esc(a.translation)+'</div>'+(a.note?'<div class="muted quranUsNote">'+esc(a.note)+'</div>':'')+'<div class="muted small" style="margin-top:10px">Added by '+(a.created_by===s.profile.id?'you':esc(s.partner?.name||'her'))+'</div><button class="btn secondary" style="width:100%;margin-top:10px" onclick="event.stopPropagation();openFullAyah(\''+a.id+'\')">Full Ayah</button><div class="muted small center pressHint">Long press for Edit · Delete · Cancel</div></section>').join('')+'</div>';
+}
+function addMeaningfulAyah(){
+  if(!sb||!s.auth)return toast('Sign in to use shared Qur’an');if(!s.connected||!s.partner?.coupleId)return toast('Connect first');
+  openSheet(modal('Save a meaningful ayah','<p class="muted">Save an ayah that meant something to you. It will be shared with her.</p><div class="field"><label>Surah</label><input id="ayahSurah" placeholder="Al-Baqarah"></div><div class="field"><label>Ayah number</label><input id="ayahNumber" type="number" min="1" placeholder="286"></div><div class="field"><label>Arabic</label><textarea id="ayahArabic" placeholder="Paste the exact Arabic ayah"></textarea></div><div class="field"><label>Translation</label><textarea id="ayahTranslation" placeholder="Paste the translation you trust"></textarea></div><div class="field"><label>Why it was meaningful <span class="muted">(optional)</span></label><textarea id="ayahNote" placeholder="A short reflection..."></textarea></div><button class="btn" style="width:100%" onclick="saveMeaningfulAyah()">Save ayah</button><button class="btn ghost" style="width:100%;margin-top:8px" onclick="closeSheet()">Cancel</button>'));
+}
+async function saveMeaningfulAyah(){
+  const surah=document.getElementById('ayahSurah')?.value.trim()||'',ayah=+(document.getElementById('ayahNumber')?.value||0),arabic=document.getElementById('ayahArabic')?.value.trim()||'',translation=document.getElementById('ayahTranslation')?.value.trim()||'',note=document.getElementById('ayahNote')?.value.trim()||'';
+  if(!surah||!ayah||!arabic||!translation)return toast('Add the reference, Arabic and translation');
+  const id=crypto.randomUUID(),row={id,couple_id:s.partner.coupleId,created_by:s.profile.id,surah,ayah,arabic,translation,note},r=await sb.from('quran_ayah_notes').insert(row);if(r.error)return toast('Could not save ayah: '+r.error.message);
+  s.quranUsAyahs=[row,...(s.quranUsAyahs||[])];save();closeSheet();render();toast('Ayah saved for Us');
+}
+function quranTogether(){
+  const date=todayKey(),daily=s.quranUsDaily||{target_pages:3},rows=s.quranUsProgress||[],me=rows.find(x=>x.user_id===s.profile.id&&x.quran_date===date),her=rows.find(x=>x.user_id===s.partner?.id&&x.quran_date===date),meDone=me?.pages_completed===3,herDone=her?.pages_completed===3,meStreak=quranStreakFor(s.profile.id),herStreak=quranStreakFor(s.partner?.id);
+  const together=Math.min(meStreak,herStreak),streakCard='<section class="card"><div class="row"><div><strong>Muraaja’ah streak</strong><div class="muted">3 pages every day. Both progress stays shared.</div></div><span class="pill">'+together+' together · '+quranStreakRestoresLeft()+' restores</span></div><div class="quranStreakGrid" style="margin-top:12px"><button class="quranStreakPerson" onclick="openQuranStreak(\''+s.profile.id+'\')"><div class="row"><strong>'+esc(s.profile.name||'You')+'</strong><span>🔥 '+meStreak+'</span></div>'+quranStreakDayStrip(s.profile.id)+'</button><button class="quranStreakPerson" onclick="openQuranStreak(\''+(s.partner?.id||'')+'\')"><div class="row"><strong>'+esc(s.partner?.name||'Her')+'</strong><span>🔥 '+herStreak+'</span></div>'+quranStreakDayStrip(s.partner?.id)+'</button></div></section>';
+  return '<main class="page"><button class="back" onclick="go(\'deenTogether\')">‹ Deen Together</button><div class="quranUsHero"><div><h1 style="margin-bottom:3px">Qur’an</h1><div class="muted">Daily shared muraaja’ah · 3 pages · repeats every day.</div></div><div class="quranUsIcon">☪</div></div><section class="card"><div class="row"><div><strong>Today’s Muraaja’ah</strong><div class="muted">Review '+(daily.target_pages||3)+' pages</div></div><span class="pill">'+(meDone?'Done':'Daily')+'</span></div><div class="quranUsPeople" style="margin-top:12px"><div class="quranUsPerson"><div class="row"><div><strong>'+esc(s.profile.name||'You')+'</strong><div class="muted">Your review</div></div><span class="'+(meDone?'quranUsDone':'')+'">'+(meDone?'✓ 3/3':'0/3')+'</span></div><div class="progress" style="margin-top:9px"><i style="width:'+(meDone?100:0)+'%"></i></div></div><div class="quranUsPerson"><div class="row"><div><strong>'+esc(s.partner?.name||'Her')+'</strong><div class="muted">Her review</div></div><span class="'+(herDone?'quranUsDone':'')+'">'+(herDone?'✓ 3/3':'0/3')+'</span></div><div class="progress" style="margin-top:9px"><i style="width:'+(herDone?100:0)+'%"></i></div></div></div><button class="btn '+(meDone?'secondary':'')+'" style="width:100%;margin-top:12px" onclick="toggleQuranMuraajaah()">'+(meDone?'Undo today’s 3 pages':'Mark today’s 3 pages done')+'</button></section>'+streakCard+'<section class="card"><div class="row"><div><strong>Meaningful ayahs</strong><div class="muted">Save a verse you want both of you to remember.</div></div><button class="btn secondary" onclick="addMeaningfulAyah()">+ Add</button></div>'+quranUsAyahCountPlaceholder()+'</section></main>';
+}
+function openFullAyah(id){const a=(s.quranUsAyahs||[]).find(x=>x.id===id);if(!a)return toast('Ayah not found');openSheet(modal('Full Ayah','<div class="quranUsRef">'+esc(a.surah)+' · '+esc(a.ayah)+'</div><p class="quranUsArabic" dir="rtl" style="font-size:25px;line-height:2.1;margin-top:14px">'+esc(a.arabic)+'</p><div style="font-size:16px;line-height:1.65">'+esc(a.translation)+'</div>'+(a.note?'<div class="muted quranUsNote">'+esc(a.note)+'</div>':'')+'<div class="muted small" style="margin-top:12px">Added by '+(a.created_by===s.profile.id?'you':esc(s.partner?.name||'her'))+'</div>'))}
+function us(){
+  const connected=!!(s.connected&&s.partner),partner=connected?avatar(s.partner.name,s.partner.avatar):'<div class="avatar fallback">?</div>';
+  return '<main class="page"><h1>Us</h1><section class="card people"><div class="person">'+avatar(s.profile.name,s.profile.avatar)+'<strong>'+esc(s.profile.name||'You')+'</strong><span class="muted">Me</span></div><div class="connectionLine">'+(connected?'↔':'+')+'</div><div class="person">'+partner+'<strong>'+(connected?esc(s.partner.name):'Not connected')+'</strong><span class="muted">'+(connected?'Her':'Connect when ready')+'</span></div></section>'+
+  (connected?'':'<section class="card center"><h3>Connect your two accounts</h3><p class="muted">Your private data stays yours. Only things intentionally shared appear in Us.</p><button class="btn" onclick="connectSheet()">Connect with Her</button></section>')+
+  ''+
+  ''+
+  '<section class="card"><div class="eyebrow" style="transform:rotate(-1.5deg);display:inline-block">ME → ME</div><div class="row"><div><strong>Grow</strong><div class="muted">My Goals · Her Goals · Our Goals</div></div><span>›</span></div><div class="grid2" style="margin-top:12px"><button class="btn secondary" onclick="go(\'grow\')">My Goals</button><button class="btn secondary" onclick="go(\'grow\')">Her Goals</button></div><button class="btn" style="width:100%;margin-top:10px" onclick="go(\'ourg\')">Our Goals</button></section>'+
+  '<section class="card" onclick="go(\'courses\')"><div class="row"><div><strong>Courses</strong><div class="muted">Personal courses · progress · reviews</div></div><span>›</span></div></section>'+
+  '<section class="card" onclick="go(\'deenTogether\')"><div class="row"><div><strong>Deen Together</strong><div class="muted">Qur’an · Hadith · Dhikr · Islamic learning</div></div><span>›</span></div></section>'+
+  '<section class="card" onclick="go(\'future\')"><div class="row"><div><strong>Before Marriage</strong><div class="muted">Deen · education · career · finances · character · marriage preparation</div></div><span>›</span></div></section>'+
+  '<section class="card" onclick="go(\'journey\')"><div class="row"><div><strong>Our Journey</strong><div class="muted">Past · Present · Future · remembered dates</div></div><span>›</span></div></section>'+
+  '<section class="card" onclick="openSuggestions()"><div class="row"><div><strong>Suggestions</strong><div class="muted">Suggest something useful — no chat, no pressure.</div></div><span>💡</span></div><div class="muted small" style="margin-top:7px">'+(connected?(s.suggestions||[]).filter(x=>x.status==='open'&&(x.senderId===s.profile.id||x.recipientId===s.profile.id)).length+' open suggestion(s)':'Connect first')+'</div></section>'+
+  '<section class="card"><div class="row"><div><strong>🫂 I Need You</strong><div class="muted">A quiet signal when you genuinely need her.</div></div></div><button class="btn" style="width:100%;margin-top:10px" '+(connected?'':'disabled')+' onclick="'+(connected?'need()':"toast('Connect first')")+'">'+(connected?'I Need You':'Connect first')+'</button></section></main>';
+}
+function grow(){
+  const connected=!!(s.connected&&s.partner);
+  const mine=(s.goals||[]).map(g=>'<section class="item" style="margin-top:10px"><div class="row"><div><strong>'+esc(g.title)+'</strong><div class="muted">'+(g.target?'Target '+esc(g.target):'No target date')+'</div></div><span>'+Math.round(g.progress||0)+'%</span></div><div class="progress" style="margin-top:8px"><i style="width:'+Math.max(0,Math.min(100,g.progress||0))+'%"></i></div><button class="btn secondary" style="margin-top:10px;width:100%" onclick="editGoal(\''+g.id+'\')">Manage my goal</button></section>').join('');
+  const hers=(s.herGoals||[]).map(g=>'<section class="item" style="margin-top:10px"><div class="row"><div><strong>'+esc(g.title)+'</strong><div class="muted">'+(g.target?'Target '+esc(g.target):'No target date')+'</div></div><span>'+Math.round(g.progress||0)+'%</span></div><div class="progress" style="margin-top:8px"><i style="width:'+Math.max(0,Math.min(100,g.progress||0))+'%"></i></div><div class="muted" style="margin-top:7px">'+esc(g.desc||'Shared by her')+'</div></section>').join('');
+  const shared=(s.sharedGoals||[]).map(g=>'<section class="item" style="margin-top:10px"><div class="row"><div><strong>'+esc(g.title)+'</strong><div class="muted">'+esc(g.category||'future')+(g.target?' · Target '+esc(g.target):'')+'</div></div><span>'+Math.round(g.progress||0)+'%</span></div><div class="progress" style="margin-top:8px"><i style="width:'+Math.max(0,Math.min(100,g.progress||0))+'%"></i></div><button class="btn secondary" style="margin-top:10px;width:100%" onclick="editSharedGoal(\''+g.id+'\')">Open shared goal</button></section>').join('');
+  return '<main class="page"><button class="back" onclick="go(\'us\')">‹ Us</button><h1>Grow</h1><section class="card"><strong>My Goals</strong><div class="muted">Owned by you. Your progress is yours to manage.</div>'+(mine||'<div class="empty">No personal goals yet.</div>')+'<button class="btn secondary" style="margin-top:10px" onclick="addGoal()">+ My Goal</button></section><section class="card"><strong>Her Goals</strong><div class="muted">Only goals she intentionally shares appear here.</div>'+(connected?(hers||'<div class="empty">She has not shared a goal yet.</div>'):'<div class="empty">Connect first.</div>')+'</section><section class="card"><strong>Our Goals</strong><div class="muted">One shared goal, updated by either of you.</div>'+(shared||'<div class="empty">No shared goals yet.</div>')+'<button class="btn" style="margin-top:10px;width:100%" onclick="addSharedGoal()">+ Our Goal</button></section></main>';
+}
+function ourg(){
+  const shared=s.sharedGoals||[];
+  return '<main class="page"><button class="back" onclick="go(\'grow\')">‹ Grow</button><div class="row"><div><h1>Our Goals</h1><div class="muted">'+shared.length+' shared goal'+(shared.length===1?'':'s')+' · both can update</div></div><button class="btn secondary" onclick="addSharedGoal()">+ Add</button></div>'+(shared.length?shared.map(g=>'<section class="card"><div class="row"><div><strong>'+esc(g.title)+'</strong><div class="muted">'+esc(g.category||'future')+(g.target?' · '+esc(g.target):'')+'</div></div><span>'+Math.round(g.progress||0)+'%</span></div><div class="progress" style="margin-top:10px"><i style="width:'+Math.max(0,Math.min(100,g.progress||0))+'%"></i></div><div class="row" style="margin-top:10px"><span class="pill">'+(g.progress>=100?'Complete':g.progress===0?'Not started':'In progress')+'</span><button class="btn secondary" onclick="editSharedGoal(\''+g.id+'\')">Manage</button></div></section>').join(''):'<section class="card center"><div class="big">🌱</div><h3>Build something together</h3><p class="muted">Create a shared goal when you’re ready.</p></section>')+'</main>';
+}
+function addSharedGoal(category='future',prefill=''){
+  openSheet(modal('Our goal','<div class="field"><label>Goal</label><input id="sharedGoal" value="'+esc(prefill)+'" placeholder="What are we building toward?"></div><div class="field"><label>Area</label><select id="sharedCategory"><option value="deen" '+(category==='deen'?'selected':'')+'>Deen</option><option value="education" '+(category==='education'?'selected':'')+'>Education</option><option value="career" '+(category==='career'?'selected':'')+'>Career</option><option value="money" '+(category==='money'?'selected':'')+'>Money</option><option value="family" '+(category==='family'?'selected':'')+'>Family</option><option value="character" '+(category==='character'?'selected':'')+'>Character</option><option value="health" '+(category==='health'?'selected':'')+'>Health</option><option value="marriage" '+(category==='marriage'?'selected':'')+'>Marriage</option><option value="future" '+(category==='future'?'selected':'')+'>Future</option></select></div><div class="field"><label>Description</label><textarea id="sharedDesc" placeholder="Why does this matter?"></textarea></div><div class="field"><label>Target date</label><input id="sharedTarget" type="date"></div><button class="btn" style="width:100%" onclick="createSharedGoal()">Create shared goal</button><button class="btn ghost" style="width:100%;margin-top:8px" onclick="closeSheet()">Cancel</button>'));
+}
+async function createSharedGoal(){
+  const n=document.getElementById('sharedGoal')?.value.trim()||'';if(!n)return toast('Add a goal');if(!s.connected||!s.partner?.coupleId)return toast('Connect first');
+  const id=crypto.randomUUID(),desc=document.getElementById('sharedDesc')?.value.trim()||'',category=document.getElementById('sharedCategory')?.value||'future',target=document.getElementById('sharedTarget')?.value||null,row={id,title:n,desc,progress:0,coupleId:s.partner.coupleId,category,createdBy:s.profile.id,target,completed:false};
+  const err=await cloudUpsert('shared_goals',{id,couple_id:s.partner.coupleId,title:n,description:desc,category,progress:0,target_date:target,completed:false,created_by:s.profile.id});if(err)return;
+  s.sharedGoals=[row,...(s.sharedGoals||[])];save();closeSheet();render();toast('Shared goal created ✓');
+}
+async function saveSharedGoalEdit(id){
+  const g=s.sharedGoals.find(x=>x.id===id);if(!g)return;
+  const progress=Math.max(0,Math.min(100,+(document.getElementById('sharedProgress')?.value||0))),desc=document.getElementById('sharedDescEdit')?.value.trim()||'',target=document.getElementById('sharedTargetEdit')?.value||g.target||null,title=document.getElementById('sharedTitleEdit')?.value.trim()||g.title;
+  const err=await cloudUpsert('shared_goals',{id:g.id,couple_id:g.coupleId,title,description:desc,category:g.category||'future',progress,target_date:target,completed:progress>=100,created_by:g.createdBy||s.profile.id});if(err)return;
+  Object.assign(g,{progress,desc,target,title,completed:progress>=100});save();closeSheet();render();toast('Shared goal saved ✓');
+}
+async function deleteSharedGoal(id){
+  const g=s.sharedGoals.find(x=>x.id===id);if(!g)return;if(!confirm('Delete this shared goal?'))return;
+  const err=await cloudDelete('shared_goals',id);if(err)return;s.sharedGoals=s.sharedGoals.filter(x=>x.id!==id);save();closeSheet();render();toast('Shared goal deleted');
+}
+function editSharedGoal(id){
+  const g=s.sharedGoals.find(x=>x.id===id);if(!g)return;
+  openSheet(modal('Our goal','<div class="field"><label>Goal</label><input id="sharedTitleEdit" value="'+esc(g.title)+'"></div><div class="field"><label>Progress: <span id="sharedPv">'+esc(g.progress||0)+'</span>%</label><input id="sharedProgress" type="range" min="0" max="100" value="'+esc(g.progress||0)+'" oninput="document.getElementById(\'sharedPv\').textContent=this.value"></div><div class="field"><label>Description</label><textarea id="sharedDescEdit">'+esc(g.desc||'')+'</textarea></div><div class="field"><label>Target date</label><input id="sharedTargetEdit" type="date" value="'+esc(g.target||'')+'"></div><button class="btn" style="width:100%" onclick="saveSharedGoalEdit(\''+id+'\')">Save</button><button class="btn danger" style="width:100%;margin-top:8px" onclick="deleteSharedGoal(\''+id+'\')">Delete</button><button class="btn ghost" style="width:100%;margin-top:8px" onclick="closeSheet()">Cancel</button>'));
+}
+function courses(){
+  const mine=s.courses.filter(c=>c.owner==='me'),hers=s.courses.filter(c=>c.owner!=='me'),avg=mine.length?Math.round(mine.reduce((a,c)=>a+(+c.progress||0),0)/mine.length):0;
+  const renderCourse=c=>'<section class="card"><div class="row"><div><strong>'+esc(c.name)+'</strong><div class="muted">'+(c.owner==='me'?'Mine':'Hers')+' · '+esc(c.status||courseStatus(c.progress))+'</div></div><span>'+Math.round(c.progress||0)+'%</span></div><div class="progress" style="margin-top:10px"><i style="width:'+Math.max(0,Math.min(100,c.progress||0))+'%"></i></div><div class="row" style="margin-top:10px"><span class="pill">'+(c.progress>=100?'Complete':c.progress===0?'0% — Not started':c.progress+'% — In progress')+'</span>'+(c.owner==='me'?'<button class="btn secondary" onclick="editCourse(\''+c.id+'\')">Manage</button>':'<span class="muted small">View only</span>')+'</div></section>';
+  return '<main class="page"><button class="back" onclick="go(\'us\')">‹ Us</button><div class="row"><div><h1 style="margin-bottom:3px">Courses</h1><div class="muted">'+mine.length+' mine · '+hers.length+' hers · '+avg+'% average</div></div><button class="btn secondary" onclick="course()">+ Add</button></div>'+(mine.length?mine.map(renderCourse).join(''):'<section class="card empty">No courses yet. Add one and track it.</section>')+(hers.length?'<h3 class="sectionTitle">Her Courses</h3>'+hers.map(renderCourse).join(''):'')+'</main>';
+}
+function deenTogether(){
+  const learned=(s.hadithLearned||[]).length,hadithPct=Math.min(100,Math.round(learned/365*100));
+  return '<main class="page"><button class="back" onclick="go(\'us\')">‹ Us</button><h1>Deen Together</h1><section class="card" onclick="openQuranTogether()"><div class="row"><div><strong>Qur’an</strong><div class="muted">3-page daily muraaja’ah · meaningful ayahs</div></div><span class="pill">Together</span></div></section><section class="card" onclick="hadithTogether()"><div class="row"><div><strong>365 Hadith</strong><div class="muted">'+learned+'/365 learned · '+hadithPct+'%</div></div><span class="pill">'+hadithPct+'%</span></div><div class="progress" style="margin-top:12px"><i style="width:'+hadithPct+'%"></i></div></section><section class="card" onclick="dhikr()"><div class="row"><div><strong>Dhikr</strong><div class="muted">Open today’s four adhkar</div></div><span class="pill">'+s.dhikr+'/400</span></div></section><section class="card" onclick="challenge()"><div class="row"><div><strong>Islamic Learning</strong><div class="muted">Challenges based on what you learned</div></div><span>›</span></div></section><div style="margin-top:14px">'+deenChallengeResult()+'</div></main>';
+}
+async function hadithTogether(){
+  // Always load the full course directly from Supabase so the page cannot stay stuck on the old 2-item local cache.
+  if(sb){
+    const {data,error}=await sb.from('hadiths').select('*').gte('course_day',1).lte('course_day',365).order('course_day',{ascending:true}).limit(365);
+    if(error){toast('Could not load the 365 Hadith course: '+error.message);return}
+    if(data&&data.length){s.hadithCourse=data;save();}
+  }
+  const course=(s.hadithCourse||[]).filter(x=>x.course_day>=1&&x.course_day<=365).sort((a,b)=>a.course_day-b.course_day);
+  if(course.length<365){toast('Hadith course loaded: '+course.length+'/365');}
+  s.screen='hadithTogether';save();render();
+}
+function hadithTogetherPage(){
+  const course=(s.hadithCourse||[]).filter(x=>x.course_day>=1&&x.course_day<=365).sort((a,b)=>a.course_day-b.course_day);
+  const learned=new Set(s.hadithLearned||[]);
+  return '<main class="page"><button class="back" onclick="go(\'deenTogether\')">‹ Deen Together</button><div class="row"><div><h1 style="margin-bottom:3px">365 Hadith</h1><div class="muted">All days in one place · Sahih al-Bukhari & Sahih Muslim</div></div><span class="pill">'+learned.size+'/365</span></div><div class="progress" style="margin:12px 0 16px"><i style="width:'+Math.min(100,Math.round(learned.size/365*100))+'%"></i></div>'+(course.length?course.map(function(h){
+    const done=h.id&&learned.has(h.id);
+    return '<section class="card"><div class="row"><span class="pill">Day '+h.course_day+' of 365</span><span class="pill">'+esc(h.collection==='sahih_muslim'?'Sahih Muslim':'Sahih al-Bukhari')+'</span></div><h3 style="margin-bottom:8px">'+esc(h.arabic||'')+'</h3>'+(h.transliteration?'<p><em>'+esc(h.transliteration)+'</em></p>':'')+'<p>“'+esc(h.english||'')+'”</p><div class="muted small">Reference: '+esc(h.reference||'')+'</div><button class="btn '+(done?'secondary':'')+'" style="width:100%;margin-top:12px" onclick="'+(h.id?'markHadithLearned(\''+h.id+'\')':'toast(\'Hadith is ready for review\')')+'">'+(done?'Learned ✓':'Mark learned')+'</button></section>';
+  }).join(''):'<div class="empty">The verified 365-day hadith course is not fully loaded yet.</div>')+'</main>';
+}
 const SUGGESTION_PRESETS=[
   ['start','⏰','Start something','Start one small habit that makes tomorrow easier.'],
   ['learn','📚','Learn something','Learn one useful thing that strengthens your skills or knowledge.'],
@@ -1235,7 +1496,7 @@ async function sendSuggestion(){
 }
 async function setSuggestionStatus(id,status){
   const x=(s.suggestions||[]).find(v=>v.id===id);if(!x||x.recipientId!==s.profile.id)return;
-  if(!sb||!s.auth)return toast('Sign in first');const err=await cloudUpdate('relationship_suggestions',{status,updated_at:new Date().toISOString()},{id:x.id,recipient_id:s.profile.id});if(err)return
+  if(!sb||!s.auth)return toast('Sign in first');const result=await sb.from('relationship_suggestions').update({status,updated_at:new Date().toISOString()}).eq('id',x.id).eq('recipient_id',s.profile.id);if(result.error){toast('Could not update suggestion: '+result.error.message);return}
   x.status=status;save();closeSheet();openSuggestions();toast(status==='done'?'Suggestion marked useful ✓':'Suggestion parked');
 }
 async function deleteSuggestion(id){
@@ -1286,13 +1547,14 @@ function journeyPage(){
 function notes(){return '<main class="page"><div class="row"><h1>Notes</h1><button class="btn secondary" onclick="addNote()">+ New</button></div>'+(s.notes.length?s.notes.map(n=>'<section class="card"><div class="row"><strong>'+esc(n.title)+'</strong><button class="icon" title="Delete note" onclick="deleteNote(\''+n.id+'\')">×</button></div><p class="muted">'+esc(n.body)+'</p></section>').join(''):'<div class="empty">Private notes live here.</div>')+'</main>'}
 function searchPage(){let q=s.search.toLowerCase();let all=[...s.habits.map(x=>({t:x.name,c:'Habit'})),...s.tasks.map(x=>({t:x.title,c:'Task'})),...s.goals.map(x=>({t:x.title,c:'Goal'})),...s.courses.map(x=>({t:x.name,c:'Course'})),...s.journey.map(x=>({t:x.title,c:'Journey'})),...s.notes.map(x=>({t:x.title,c:'Note'}))];let r=all.filter(x=>!q||x.t.toLowerCase().includes(q));return `<main class="page"><h1>Search</h1><div class="field"><input id="searchInput" value="${esc(s.search)}" oninput="search()" placeholder="Search habits, tasks, goals, courses, journey..."></div>${r.map(x=>`<div class="item" style="margin:8px 0"><strong>${esc(x.t)}</strong><div class="muted">${x.c}</div></div>`).join('')||'<div class="empty">Nothing found.</div>'}</main>`}
 async function persistPreferences(){
-  const err=await cloudUpdate('profiles',{
+  if(!sb||!s.auth)return;
+  const {error}=await sb.from('profiles').update({
     visual_mode:s.profile.visualMode||'classic',
     dark_mode:s.theme==='dark',
     notifications:!!s.settings.notifications,
     updated_at:new Date().toISOString()
-  },{id:s.profile.id});
-  if(err)toast('Settings could not sync: '+err.message);
+  }).eq('id',s.profile.id);
+  if(error)toast('Settings could not sync: '+error.message);
 }
 async function setThemeMode(){s.theme=s.theme==='dark'?'light':'dark';save();render();await persistPreferences()}
 async function setVisualMode(mode){s.profile.visualMode=mode==='girl'?'girl':mode==='ocean'?'ocean':'classic';save();render();await persistPreferences()}
@@ -1306,19 +1568,76 @@ function courseNextMove(progress){
   const p=+progress||0;
   return p<=0?'Start the first session.':p<50?'Keep building the skill and log what you learn.':p<100?'Review one thing you learned, then move forward.':'You finished this plan. Keep the skill alive.';
 }
+function course(){
+  openSheet(modal('Create learning plan',
+    '<section class="item" style="margin:6px 0 14px"><div class="eyebrow">ONE THING AT A TIME</div><strong>Turn one subject into a real plan.</strong><div class="muted small" style="margin-top:4px">You choose the goal, rhythm, pace, and progress.</div></section>'+
+    '<div class="field"><label>What are you learning?</label><input id="courseName" placeholder="Web Development"></div>'+
+    '<div class="grid2"><div class="field"><label>Course length</label><input id="courseDuration" type="number" min="1" max="3650" placeholder="30"></div><div class="field"><label>Days per week</label><select id="courseDaysWeek">'+[1,2,3,4,5,6,7].map(n=>'<option value="'+n+'">'+scheduleLabel(n)+'</option>').join('')+'</select></div></div>'+
+    '<div class="field"><label>Current progress: <span id="newCoursePv">0</span>%</label><input id="newCourseProgress" type="range" min="0" max="100" value="0" oninput="document.getElementById(\'newCoursePv\').textContent=this.value"></div>'+
+    '<div class="field"><label>Notes <span class="muted">(optional)</span></label><textarea id="courseNotes" placeholder="What matters most in this course?"></textarea></div>'+
+    '<div class="field"><label>Start date</label><input id="courseStart" type="date" value="'+todayKey()+'"></div>'+
+    '<button class="btn" style="width:100%;margin-top:4px" onclick="createCourse()">Create learning plan</button>'+
+    '<button class="btn ghost" style="width:100%;margin-top:8px" onclick="closeSheet()">Cancel</button>'));
+}
+function courseDetail(id){
+  const c=s.courses.find(x=>x.id===id);
+  if(!c)return '<main class="page"><button class="back" onclick="go(\'courses\')">‹ Courses</button><div class="empty">Course not found.</div></main>';
+  const reviews=(s.courseReviews||[]).filter(r=>r.courseId===id).sort((a,b)=>String(b.date).localeCompare(String(a.date))),recent=reviews.slice(0,8),status=courseStatus(c.progress||0),stage=courseStage(c.progress||0);
+  return '<main class="page"><button class="back" onclick="go(\'courses\')">‹ Courses</button>'+
+    '<section class="card"><div class="eyebrow">'+(c.owner==='me'?'YOUR LEARNING PLAN':'HER LEARNING PLAN')+'</div><div class="row" style="margin-top:6px"><div><h1 style="margin:0">'+esc(c.name)+'</h1><div class="muted" style="margin-top:5px">'+esc(coursePlanLabel(c))+'</div></div><span class="pill">'+Math.round(c.progress||0)+'%</span></div>'+
+    '<div class="progress" style="margin-top:14px"><i style="width:'+Math.max(0,Math.min(100,c.progress||0))+'%"></i></div>'+
+    '<div class="row" style="margin-top:10px"><strong>'+esc(stage)+'</strong><span class="muted small">'+esc(courseNextMove(c.progress||0))+'</span></div>'+
+    '<div class="grid2" style="margin-top:13px"><div class="item center"><strong>'+esc(c.daysPerWeek?scheduleLabel(c.daysPerWeek):'—')+'</strong><div class="muted tiny">weekly rhythm</div></div><div class="item center"><strong>'+reviews.length+'</strong><div class="muted tiny">reviews</div></div></div>'+
+    (c.notes?'<div class="courseNotes"><strong>Notes</strong><div class="muted" style="margin-top:5px">'+esc(c.notes)+'</div></div>':'')+
+    (c.owner==='me'?'<div class="grid2" style="margin-top:14px"><button class="btn secondary" onclick="addCourseReview(\''+id+'\')">Log review</button><button class="btn" onclick="editCourse(\''+id+'\')">Manage</button></div>':'<div class="pill" style="margin-top:14px;display:block;text-align:center">Personal plan · View only</div>')+
+    '</section><section class="card"><div class="row"><div><strong>Review history</strong><div class="muted">Keep the record about what you actually learned.</div></div><span class="pill">'+reviews.length+'</span></div>'+
+    (recent.length?recent.map(function(r){return '<div class="reviewRow"><div class="row"><strong>'+esc(r.date)+'</strong><span class="pill">'+(r.userId===s.profile.id?'You':esc(s.partner?.name||'Her'))+'</span></div><div class="muted" style="margin-top:6px">'+esc(r.note||'Review logged.')+'</div>'+(r.userId===s.profile.id?'<button class="icon" title="Delete review" style="margin-top:8px" onclick="deleteCourseReview(\''+r.id+'\')">×</button>':'')+'</div>'}).join(''):'<div class="empty">No reviews logged yet.</div>')+
+    '</section></main>';
+}
+function courses(){
+  const mine=s.courses.filter(c=>c.owner==='me'),hers=s.courses.filter(c=>c.owner!=='me'),avg=mine.length?Math.round(mine.reduce((a,c)=>a+(+c.progress||0),0)/mine.length):0,focus=mine.find(c=>(+c.progress||0)<100)||mine[0]||null;
+  const renderCourse=c=>'<button class="card" style="width:100%;text-align:left;cursor:pointer" onclick="courseDetail(\''+c.id+'\')"><div class="row"><div><div class="eyebrow">'+(c.owner==='me'?'PERSONAL LEARNING PLAN':'HER LEARNING PLAN')+'</div><strong>'+esc(c.name)+'</strong><div class="muted">'+esc(coursePlanLabel(c))+'</div></div><span class="pill">'+Math.round(c.progress||0)+'%</span></div><div class="progress" style="margin-top:11px"><i style="width:'+Math.max(0,Math.min(100,c.progress||0))+'%"></i></div><div class="row" style="margin-top:9px"><span class="muted small">'+esc(courseStage(c.progress||0))+'</span><span class="muted small">'+courseReviewCount(c.id)+' review'+(courseReviewCount(c.id)===1?'':'s')+'</span></div></button>';
+  const focusCard=focus?'<section class="card"><div class="eyebrow">CURRENT FOCUS</div><div class="row" style="margin-top:6px"><div><h2 style="margin:0">'+esc(focus.name)+'</h2><div class="muted" style="margin-top:4px">'+esc(coursePlanLabel(focus))+'</div></div><strong>'+Math.round(focus.progress||0)+'%</strong></div><div class="progress" style="margin-top:12px"><i style="width:'+Math.max(0,Math.min(100,focus.progress||0))+'%"></i></div><div class="muted small" style="margin-top:8px">'+esc(courseNextMove(focus.progress||0))+'</div><button class="btn" style="width:100%;margin-top:12px" onclick="courseDetail(\''+focus.id+'\')">Continue plan</button></section>':'<section class="card"><div class="eyebrow">START SMALL</div><h2 style="margin:5px 0">One useful course. One clear plan.</h2><div class="muted">Build a learning plan around a real subject, not a pile of random tasks.</div><button class="btn" style="width:100%;margin-top:12px" onclick="course()">Create first plan</button></section>';
+  return '<main class="page"><button class="back" onclick="go(\'us\')">‹ Us</button><div class="row"><div><h1 style="margin-bottom:3px">Courses</h1><div class="muted">Your learning, your pace · '+avg+'% average progress</div></div><button class="btn secondary" onclick="course()">+ Add</button></div>'+focusCard+
+    (mine.length?'<h3 class="sectionTitle">My learning plans</h3>'+mine.map(renderCourse).join(''):'')+
+    (hers.length?'<h3 class="sectionTitle">Her learning plans</h3>'+hers.map(renderCourse).join(''):'')+'</main>';
+}
+function deen(){
+  const total=s.dhikr,q=(s.quranGoals&&s.quranGoals[0])||null,h=s.dailyHadith||s.hadithCourse?.[0],hday=h?.course_day||1,learned=h?.id&&(s.hadithLearned||[]).includes(h.id),d=h?hadithDisplay(h):null;
+  return '<main class="page"><h1>Deen</h1><section class="card" onclick="prayer()"><div class="row"><div><strong>Prayer reminders</strong><div class="muted">Fajr · Dhuhr · Asr · Maghrib · Isha</div></div><span>⏰</span></div></section><section class="card" onclick="dhikr()"><div class="row"><div><strong>Dhikr</strong><div class="muted">Four daily adhkar</div></div><span class="pill">'+total+'/400</span></div><div style="margin-top:12px" class="progress"><i style="width:'+Math.min(100,total/4)+'%"></i></div></section><section class="card" onclick="hadith()"><div class="row"><span class="pill">Today’s Hadith · Day '+hday+'</span><span class="pill">'+(learned?'Learned':'New')+'</span></div>'+(d?'<div class="muted small" style="margin-top:9px">Narrated by '+esc(d.narrator)+'</div><h2 style="line-height:1.5;margin-top:7px">'+esc(d.body)+'</h2>':'<h2>Today’s hadith</h2>')+'<div class="muted small">'+esc(h?.reference||'Sahih collection')+'</div></section><section class="card" onclick="quranGoal()"><div class="row"><strong>Qur’an goal</strong><span>'+(q?q.progress:0)+'%</span></div><div class="muted">'+esc(q?q.title:'Set a Qur’an goal')+'</div></section><section class="card" onclick="challenge()"><strong>Deen Challenge</strong><div class="muted">Islamic scenarios based on what you’ve learned.</div></section></main>';
+}
+function hadithTogetherPage(){
+  const course=(s.hadithCourse||[]).filter(x=>x.course_day>=1&&x.course_day<=365).sort((a,b)=>a.course_day-b.course_day),learned=new Set(s.hadithLearned||[]),today=course.find(x=>x.course_day===hadithCourseDay())||course.find(x=>!learned.has(x.id))||course[0],pct=Math.min(100,Math.round(learned.size/365*100)),d=today?hadithDisplay(today):null,a=today?hadithArabicDisplay(today):'';
+  const next=course.filter(x=>!learned.has(x.id)).slice(0,7);
+  const todayCard=today?'<section class="card"><div class="eyebrow">TODAY · DAY '+today.course_day+'</div><div class="muted small" style="margin-top:8px">Narrated by '+esc(d.narrator)+'</div>'+(a?'<div class="hadithArabic" dir="rtl">'+esc(a)+'</div>':'')+'<div style="font-size:17px;line-height:1.7;margin-top:9px">'+esc(d.body)+'</div><div class="muted tiny" style="margin-top:8px">'+esc(today.collection==='sahih_muslim'?'Sahih Muslim':'Sahih al-Bukhari')+' · '+esc(today.reference||'')+'</div><button class="btn" style="width:100%;margin-top:12px" onclick="hadithPractice(\''+today.id+'\')">Practice this Hadith</button></section>':'';
+  const courseMap=next.length?next.map(function(h){const x=hadithExcerpt(h,145),aa=hadithArabicDisplay(h);return '<button class="item" style="width:100%;text-align:left;cursor:pointer;margin-top:8px" onclick="hadithPractice(\''+h.id+'\')"><div class="row"><strong>Day '+h.course_day+'</strong><span class="pill">Next</span></div>'+(aa?'<div class="hadithArabic hadithArabicSmall" dir="rtl">'+esc(aa)+'</div>':'')+'<div class="muted tiny">Narrated by '+esc(x.narrator)+'</div><div style="margin-top:4px">'+esc(x.body)+'</div></button>'}).join(''):'<div class="empty">You completed the loaded course.</div>';
+  return '<main class="page"><button class="back" onclick="go(\'deenTogether\')">‹ Deen Together</button><div class="row"><div><h1 style="margin-bottom:3px">365 Hadith</h1><div class="muted">A daily memorization path · Sahih al-Bukhari & Sahih Muslim</div></div><span class="pill">'+learned.size+'/365</span></div><div class="progress" style="margin:12px 0 8px"><i style="width:'+pct+'%"></i></div><div class="muted small">'+pct+'% complete · Arabic first, English underneath.</div>'+todayCard+'<section class="card"><div class="row"><div><strong>Your next seven</strong><div class="muted">Small lessons are easier to return to.</div></div><span class="pill">7</span></div>'+courseMap+'</section></main>';
+}
 
-
-
-
-
-
-
-
+function progress(){
+  const habits=s.habits||[],done=habits.filter(x=>x.done).length,total=habits.length||1,streak=s.streak||0;
+  return '<main class="page"><h1>Progress</h1><div class="muted">A simple record of showing up.</div><section class="card"><div class="row"><div><div class="eyebrow">TODAY</div><h2 style="margin:4px 0">Daily progress</h2></div><strong>'+Math.round(done/total*100)+'%</strong></div><div class="progress" style="margin-top:12px"><i style="width:'+Math.round(done/total*100)+'%"></i></div><div class="muted small" style="margin-top:8px">'+done+' of '+habits.length+' habits completed</div></section><section class="card"><div class="row"><div><strong>Streak</strong><div class="muted">Keep going without guilt when you miss a day.</div></div><span class="pill">'+streak+' days</span></div><button class="btn secondary" style="width:100%;margin-top:12px" onclick="restoreStreak()">Restore streak</button></section></main>';
+}
+function grow(){
+  return '<section class="card growCard" onclick="go(\'growHub\')" style="cursor:pointer"><div class="row"><div><div class="eyebrow">GROW</div><h2 style="margin:4px 0">Grow together, separately.</h2><div class="muted">My Goal · Her Goal · Our Goal</div></div><span class="pill">›</span></div></section>';
+}
 function growHub(){
   return '<main class="page"><button class="back" onclick="go(\'us\')">‹ Us</button><h1>Grow</h1><div class="muted">Three directions. One future.</div><section class="card" onclick="go(\'myGoals\')" style="cursor:pointer"><strong>My Goals</strong><div class="muted">What I am building for myself.</div></section><section class="card" onclick="go(\'herGoals\')" style="cursor:pointer"><strong>Her Goals</strong><div class="muted">What she is building for herself.</div></section><section class="card" onclick="go(\'ourGoals\')" style="cursor:pointer"><strong>Our Goals</strong><div class="muted">What we are building together.</div></section></main>';
 }
-
-
+function deen(){
+  const total=s.dhikr,q=s.quranGoals&&s.quranGoals[0],h=s.dailyHadith||s.hadithCourse?.[0],d=h?hadithDisplay(h):null;
+  return '<main class="page"><h1>Deen</h1><section class="card" onclick="prayer()"><div class="row"><div><strong>Prayer reminders</strong><div class="muted">Fajr · Dhuhr · Asr · Maghrib · Isha</div></div><span>⏰</span></div></section><section class="card" onclick="dhikr()"><div class="row"><div><strong>Dhikr</strong><div class="muted">Daily remembrance</div></div><span class="pill">'+total+'/400</span></div></section><section class="card" onclick="hadith()"><div class="eyebrow">TODAY’S HADITH</div>'+(d?'<div class="hadithArabic" dir="rtl">'+esc(hadithArabicDisplay(h))+'</div><div class="muted small" style="margin-top:10px">Narrated by '+esc(d.narrator)+'</div><div style="font-size:16px;line-height:1.65;margin-top:6px">'+esc(d.body)+'</div><div class="muted tiny" style="margin-top:8px">'+esc(h.collection==='sahih_muslim'?'Sahih Muslim':'Sahih al-Bukhari')+' · '+esc(h.reference||'')+'</div>':'<div class="muted">Open today’s Hadith.</div>')+'</section><section class="card" onclick="challenge()"><div class="row"><div><strong>Deen Challenge</strong><div class="muted">One real Islamic question.</div></div><span class="pill">1 question</span></div></section></main>';
+}
+function challenge(){
+  const questions=[
+    {q:'You are angry and about to say something harmful. Which response best follows the Sunnah?',a:['Speak immediately so you do not keep it inside.','Stay silent and control your anger.','Argue until the other person understands.','Ignore the matter forever.'],correct:1},
+    {q:'A good deed is done sincerely for Allah. What matters most according to the Hadith of intentions?',a:['How many people saw it.','How difficult it was.','The intention behind it.','Whether it was posted online.'],correct:2},
+    {q:'Someone is struggling. What response reflects the Prophetic teaching about mercy?',a:['Make their problem public.','Show mercy and help where you can.','Tell them to handle it alone.','Judge them first.'],correct:1}
+  ];
+  const q=questions[Math.floor((new Date().getDate()+new Date().getMonth()*3)%questions.length)];
+  const key='deenChallengeAnswer_'+todayKey(),saved=localStorage.getItem(key),answer=saved===null?null:+saved;
+  return '<main class="page"><button class="back" onclick="go(\'deen\')">‹ Deen</button><h1>Deen Challenge</h1><div class="muted">One question. Think first.</div><section class="card"><div class="eyebrow">QUESTION</div><h2 style="line-height:1.45">'+esc(q.q)+'</h2>'+q.a.map((x,i)=>'<button class="item" style="width:100%;text-align:left;margin-top:8px;'+(answer!==null&&i===q.correct?'border-color:var(--accent)':'')+'" '+(answer!==null?'disabled':'onclick="answerChallenge('+i+','+q.correct+')">')+String.fromCharCode(65+i)+'. '+esc(x)+'</button>').join('')+(answer!==null?'<div class="item" style="margin-top:12px"><strong>'+(answer===q.correct?'Correct.':'Not quite.')+'</strong><div class="muted" style="margin-top:4px">Your answer is recorded in the Us section.</div></div>':'')+'</section></main>';
+}
 function answerChallenge(choice,correct){
   localStorage.setItem('deenChallengeAnswer_'+todayKey(),String(choice));
   const scoreKey='deenChallengeScore',old=JSON.parse(localStorage.getItem(scoreKey)||'{"correct":0,"total":0}');
@@ -1333,11 +1652,35 @@ function courseTimelineProgress(c){
   const days=Math.max(1,+c?.durationDays||30),start=c?.startDate?new Date(c.startDate+'T00:00:00'):new Date(),elapsed=Math.max(0,Math.floor((Date.now()-start.getTime())/86400000));
   return Math.min(100,Math.max(0,Math.round(elapsed/days*100)));
 }
+function course(){
+  openSheet(modal('Create learning plan','<div class="field"><label>Course name</label><input id="courseName" placeholder="Web development"></div><div class="field"><label>How many days does this course take?</label><input id="courseDuration" type="number" min="1" max="3650" placeholder="30"></div><div class="field"><label>Days per week</label><select id="courseDaysWeek">'+[1,2,3,4,5,6,7].map(n=>'<option value="'+n+'">'+scheduleLabel(n)+'</option>').join('')+'</select></div><div class="field"><label>Notes</label><textarea id="courseNotes" placeholder="What are you learning?"></textarea></div><div class="field"><label>Start date</label><input id="courseStart" type="date" value="'+todayKey()+'"></div><button class="btn" style="width:100%" onclick="createCourse()">Create course</button>'));
+}
+function courses(){
+  const mine=s.courses.filter(c=>c.owner==='me'),hers=s.courses.filter(c=>c.owner!=='me');
+  const card=c=>{const pct=courseTimelineProgress(c);return '<button class="card" style="width:100%;text-align:left;cursor:pointer" onclick="courseDetail(\''+c.id+'\')"><div class="row"><div><div class="eyebrow">'+(c.owner==='me'?'MY COURSE':'HER COURSE')+'</div><strong>'+esc(c.name)+'</strong><div class="muted">'+esc(coursePlanLabel(c))+'</div></div><span class="pill">'+pct+'%</span></div><div class="progress" style="margin-top:10px"><i style="width:'+pct+'%"></i></div></button>'};
+  return '<main class="page"><button class="back" onclick="go(\'us\')">‹ Us</button><div class="row"><div><h1>Courses</h1><div class="muted">Build skills with a real time plan.</div></div><button class="btn secondary" onclick="course()">+ Add</button></div><section class="card"><div class="eyebrow">HOW PROGRESS WORKS</div><strong>You choose the course length. The app calculates the plan.</strong><div class="muted small" style="margin-top:5px">No progress slider. No manual percentage control.</div></section>'+(mine.length?'<h3 class="sectionTitle">My courses</h3>'+mine.map(card).join(''):'<div class="empty">No personal courses yet.</div>')+(hers.length?'<h3 class="sectionTitle">Her courses</h3>'+hers.map(card).join(''):'')+'</main>';
+}
 
-
-
-
-
+function courseDetail(id){
+  const c=s.courses.find(x=>x.id===id); if(!c)return '<main class="page"><div class="empty">Course not found.</div></main>';
+  const days=Math.max(1,+c.durationDays||+c.days||30),start=c.startDate?new Date(c.startDate+'T00:00:00'):new Date(),elapsed=Math.max(0,Math.floor((Date.now()-start.getTime())/86400000)),auto=Math.min(100,Math.round(elapsed/days*100)),pct=c.progressManual!==undefined?+c.progressManual:auto;
+  const reviews=(s.courseReviews||[]).filter(r=>r.courseId===id).sort((a,b)=>String(b.date).localeCompare(String(a.date)));
+  return '<main class="page"><button class="back" onclick="go(\'courses\')">‹ Courses</button><section class="card"><div class="eyebrow">'+(c.owner==='me'?'MY COURSE':'HER COURSE')+'</div><h1>'+esc(c.name)+'</h1><div class="muted">'+days+' day course · started '+esc(c.startDate||'')+'</div><div class="progress" style="margin-top:14px"><i style="width:'+pct+'%"></i></div><div class="row" style="margin-top:8px"><strong>'+pct+'%</strong><span class="muted">'+Math.max(0,days-elapsed)+' days remaining</span></div><div class="item" style="margin-top:12px"><strong>Plan</strong><div class="muted">Your percentage is calculated from the course timeline. There is no slider.</div></div>'+(c.notes?'<div class="courseNotes"><strong>Notes</strong><div class="muted">'+esc(c.notes)+'</div></div>':'')+(c.owner==='me'?'<div class="grid2" style="margin-top:14px"><button class="btn secondary" onclick="addCourseReview(\''+id+'\')">Log review</button><button class="btn" onclick="editCourse(\''+id+'\')">Manage</button></div>':'')+'</section><section class="card"><div class="row"><strong>Review history</strong><span class="pill">'+reviews.length+'</span></div>'+(reviews.length?reviews.map(r=>'<div class="reviewRow"><strong>'+esc(r.date)+'</strong><div class="muted">'+esc(r.note||'Review logged.')+'</div></div>').join(''):'<div class="empty">No reviews yet.</div>')+'</section></main>';
+}
+function us(){
+  const connected=!!(s.connected&&s.partner);
+  const partner=connected?avatar(s.partner.name,s.partner.avatar):'<div class="avatar fallback">?</div>';
+  return '<main class="page"><h1>Us</h1>'+
+    '<section class="card people"><div class="person">'+avatar(s.profile.name,s.profile.avatar)+'<strong>'+esc(s.profile.name||'You')+'</strong><span class="muted">Me</span></div><div class="connectionLine">'+(connected?'↔':'+')+'</div><div class="person">'+partner+'<strong>'+(connected?esc(s.partner.name):'Not connected')+'</strong><span class="muted">'+(connected?'Her':'Connect when ready')+'</span></div></section>'+
+    (connected?'':'<section class="card center"><h3>Connect your two accounts</h3><p class="muted">Your private data stays yours. Only things intentionally shared appear in Us.</p><button class="btn" onclick="connectSheet()">Connect with Her</button></section>')+
+    grow()+
+    '<section class="card" onclick="go(\'courses\')" style="cursor:pointer"><div class="row"><div><strong>Courses</strong><div class="muted">Learn, review, and build useful skills.</div></div><span class="pill">›</span></div></section>'+
+    '<section class="card" onclick="go(\'deenTogether\')" style="cursor:pointer"><div class="row"><div><strong>Deen Together</strong><div class="muted">Shared Qur’an, Hadith, and learning.</div></div><span class="pill">›</span></div></section>'+
+    deenChallengeResult()+
+    '<section class="card" onclick="go(\'beforeMarriage\')" style="cursor:pointer"><div class="row"><div><strong>Before Marriage</strong><div class="muted">Prepare your deen, education, career, character, and marriage responsibly.</div></div><span class="pill">›</span></div></section>'+
+    '<section class="card" onclick="go(\'journey\')" style="cursor:pointer"><div class="row"><div><strong>Our Journey</strong><div class="muted">Remember the moments that shaped your story.</div></div><span class="pill">›</span></div></section>'+
+    '</main>';
+}
 
 function hadithArabicDisplay(h){
   let a=String(h?.arabic||'').replace(/\s+/g,' ').trim();
@@ -1348,10 +1691,51 @@ function hadithArabicDisplay(h){
   if(a.startsWith('عَنِ النَّبِيِّ'))a=a.replace(/^عَنِ النَّبِيِّ[^:،]*[:،]?\s*/,'قَالَ النَّبِيُّ: ');
   return a;
 }
-
-
-
-
+function editCourse(id){
+  const c=s.courses.find(x=>x.id===id);if(!c)return;if(c.owner!=='me')return toast('Her course is view-only');
+  openSheet(modal('Manage course',
+    '<section class="item"><div class="eyebrow">PERSONAL COURSE</div><strong>'+esc(c.name)+'</strong><div class="muted small" style="margin-top:4px">The app calculates progress from the course timeline.</div></section>'+
+    '<div class="field"><label>Course name</label><input id="editCourseName" value="'+esc(c.name||'')+'"></div>'+
+    '<div class="field"><label>How many days?</label><input id="editCourseDuration" type="number" min="1" max="3650" value="'+esc(c.durationDays||30)+'"></div>'+
+    '<div class="field"><label>Days per week</label><select id="editCourseDaysWeek">'+[1,2,3,4,5,6,7].map(n=>'<option value="'+n+'" '+(+c.daysPerWeek===n?'selected':'')+'>'+scheduleLabel(n)+'</option>').join('')+'</select></div>'+
+    '<div class="field"><label>Notes</label><textarea id="editCourseNotes">'+esc(c.notes||'')+'</textarea></div>'+
+    '<div class="field"><label>Start date</label><input id="editCourseStart" type="date" value="'+esc(c.startDate||todayKey())+'"></div>'+
+    '<button class="btn" style="width:100%" onclick="saveCourseEdit(\''+id+'\')">Save changes</button>'+
+    '<button class="btn danger" style="width:100%;margin-top:8px" onclick="deleteCourse(\''+id+'\')">Delete course</button>'+
+    '<button class="btn ghost" style="width:100%;margin-top:8px" onclick="closeSheet()">Cancel</button>'));
+}
+async function saveCourseEdit(id){
+  const c=s.courses.find(x=>x.id===id);if(!c||c.owner!=='me')return toast('Only your course can be managed');
+  const name=document.getElementById('editCourseName')?.value.trim()||'',duration=+(document.getElementById('editCourseDuration')?.value||0),daysWeek=+(document.getElementById('editCourseDaysWeek')?.value||7),notes=document.getElementById('editCourseNotes')?.value.trim()||'',start=document.getElementById('editCourseStart')?.value||c.startDate||todayKey();
+  if(!name||!duration||!daysWeek||daysWeek>7)return toast('Complete the course plan first');
+  const targetDate=courseTargetDate(start,duration,daysWeek),status=courseStatus(0);
+  const err=await cloudUpsert('courses',{id:c.id,user_id:s.profile.id,couple_id:c.coupleId||null,title:name,progress:0,status,duration_days:duration,days_per_week:daysWeek,notes,start_date:start,target_date:targetDate});if(err)return;
+  Object.assign(c,{name,progress:0,status,durationDays:duration,daysPerWeek:daysWeek,notes,startDate:start,targetDate});save();closeSheet();render();toast('Course updated ✓');
+}
+function hadith(){
+  let h=s.dailyHadith||s.hadithCourse?.find(x=>x.course_day===hadithCourseDay())||s.hadithCourse?.[0];
+  if(!h)return toast('Hadith is not loaded yet');
+  const d=hadithDisplay(h),a=hadithArabicDisplay(h);
+  openSheet(modal('Today’s Hadith',
+    '<div class="row"><span class="pill">'+esc(h.collection==='sahih_muslim'?'Sahih Muslim':'Sahih al-Bukhari')+'</span><span class="pill">Day '+h.course_day+'</span></div>'+
+    (a?'<div class="hadithArabic" dir="rtl">'+esc(a)+'</div>':'')+
+    '<div class="muted small" style="margin-top:14px">Narrated by '+esc(d.narrator)+'</div>'+
+    '<div style="font-size:17px;line-height:1.7;margin-top:6px">'+esc(d.body)+'</div>'+
+    '<div class="muted small" style="margin-top:12px">'+esc(h.collection==='sahih_muslim'?'Sahih Muslim':'Sahih al-Bukhari')+' · '+esc(h.reference||'')+'</div>'+
+    '<button class="btn" style="width:100%;margin-top:14px" onclick="closeSheet();hadithPractice(\''+h.id+'\')">Practice this Hadith</button>'
+  ));
+}
+async function hadithPractice(hadithId){
+  const h=(s.hadithCourse||[]).find(x=>x.id===hadithId)||s.dailyHadith;if(!h)return;
+  const d=hadithDisplay(h),a=hadithArabicDisplay(h),done=(s.hadithLearned||[]).includes(h.id);
+  openSheet(modal('Hadith',
+    (a?'<div class="hadithArabic" dir="rtl">'+esc(a)+'</div>':'')+
+    '<div class="muted small" style="margin-top:12px">Narrated by '+esc(d.narrator)+'</div>'+
+    '<div style="font-size:17px;line-height:1.7;margin-top:6px">'+esc(d.body)+'</div>'+
+    '<div class="muted small" style="margin-top:12px">'+esc(h.collection==='sahih_muslim'?'Sahih Muslim':'Sahih al-Bukhari')+' · '+esc(h.reference||'')+'</div>'+
+    '<button class="btn '+(done?'secondary':'')+'" style="width:100%;margin-top:14px" onclick="closeSheet();markHadithLearned(\''+h.id+'\')">'+(done?'Learned ✓':'Mark learned ✓')+'</button>'
+  ));
+}
 
 function myGoals(){
   const mine=s.goals||[];
@@ -1369,40 +1753,33 @@ function goalListPage(title,sub,items,editable,addFn){
   const rows=items.length?items.map(g=>'<section class="card"><div class="row"><div><strong>'+esc(g.title)+'</strong><div class="muted small">'+esc(g.desc||'')+'</div></div><span class="pill">'+Math.round(g.progress||0)+'%</span></div><div class="progress" style="margin-top:10px"><i style="width:'+Math.max(0,Math.min(100,g.progress||0))+'%"></i></div>'+(editable?'<div class="grid2" style="margin-top:10px"><button class="btn secondary" onclick="editGoal(\''+g.id+'\')">Edit</button><button class="btn danger" onclick="deleteGoal(\''+g.id+'\')">Delete</button></div>':'')+'</section>').join(''):'<div class="empty">Nothing here yet.</div>';
   return '<main class="page"><button class="back" onclick="go(\'growHub\')">‹ Grow</button><div class="row"><div><h1>'+title+'</h1><div class="muted">'+sub+'</div></div>'+(addFn?'<button class="btn secondary" onclick="'+addFn+'()">+ Add</button>':'')+'</div>'+rows+'</main>';
 }
-
-
+function challenge(){
+  const questions=[
+    {q:'You are angry and about to say something harmful. Which response best follows the Sunnah?',a:['Speak immediately.','Stay silent and control your anger.','Argue until they understand.','Ignore everyone forever.'],correct:1},
+    {q:'What matters most in the Hadith about intentions?',a:['How many people saw the deed.','How difficult the deed was.','The intention behind the deed.','Whether it was posted.'],correct:2},
+    {q:'Someone is struggling. Which response reflects the teaching of mercy?',a:['Make their problem public.','Show mercy and help where you can.','Judge them first.','Tell them to handle it alone.'],correct:1}
+  ];
+  const q=questions[Math.floor((new Date().getDate()+new Date().getMonth()*3)%questions.length)];
+  const key='deenChallengeAnswer_'+todayKey(),saved=localStorage.getItem(key),answer=saved===null?null:+saved;
+  openSheet(modal('Deen Challenge',
+    '<div class="eyebrow">ONE QUESTION</div><h2 style="line-height:1.45">'+esc(q.q)+'</h2>'+
+    q.a.map((x,i)=>'<button class="item" style="width:100%;text-align:left;margin-top:8px" '+(answer!==null?'disabled':'onclick="answerChallenge('+i+','+q.correct+')">')+String.fromCharCode(65+i)+'. '+esc(x)+'</button>').join('')+
+    (answer!==null?'<div class="item" style="margin-top:12px"><strong>'+(answer===q.correct?'Correct.':'Not quite.')+'</strong><div class="muted" style="margin-top:4px">Your running result is saved in Us → Deen Challenge.</div></div>':'')
+  ));
+}
+function answerChallenge(choice,correct){
+  localStorage.setItem('deenChallengeAnswer_'+todayKey(),String(choice));
+  const scoreKey='deenChallengeScore',old=JSON.parse(localStorage.getItem(scoreKey)||'{"correct":0,"total":0}');
+  old.total++;if(choice===correct)old.correct++;localStorage.setItem(scoreKey,JSON.stringify(old));closeSheet();render();toast(choice===correct?'Correct ✓':'Keep learning — next question tomorrow.');
+}
 function settings(){return `<main class="page"><h1>Settings</h1><section class="card"><div style="display:flex;align-items:center;gap:12px">${avatar(s.profile.name,s.profile.avatar)}<div><strong>${esc(s.profile.name||'Your profile')}</strong><div class="muted">${esc(s.profile.email||'')}</div></div></div><button class="btn secondary" style="width:100%;margin-top:12px" onclick="profile()">Edit profile</button><button class="btn ghost" style="width:100%;margin-top:8px" onclick="signOut()">Sign out</button></section><section class="card"><strong>Appearance</strong><div class="row" style="margin-top:12px"><span>Use dark appearance</span><button class="toggle ${s.theme==='dark'?'on':''}" onclick="setThemeMode()"><i></i></button></div><div class="field" style="margin-top:14px"><label>Personal style</label><select onchange="setVisualMode(this.value)"><option value="classic" ${s.profile.visualMode!=='girl'?'selected':''}>Classic — your current look</option><option value="girl" ${s.profile.visualMode==='girl'?'selected':''}>Soft rose — her style</option><option value="ocean" ${s.profile.visualMode==='ocean'?'selected':''}>Ocean blue — your new style</option></select></div></section><section class="card"><strong>Notifications</strong><div class="row" style="margin-top:12px"><span>Allow reminders</span><button class="toggle ${s.settings.notifications?'on':''}" onclick="setNotifications()"><i></i></button></div></section><section class="card"><strong>Special days & holidays</strong><div class="muted">Eid, birthdays, anniversaries and dates worth remembering.</div><button class="btn secondary" style="margin-top:10px;width:100%" onclick="addSpecialDay()">+ Add special day</button></section><section class="card"><strong>Connection</strong><div class="muted">${s.connected&&s.partner?'Connected with '+esc(s.partner.name):'No partner connected yet.'}</div><button class="btn secondary" style="margin-top:10px" onclick="connectSheet()">${s.connected?'Manage connection':'Connect with Her'}</button></section><section class="card"><strong>Privacy & Data</strong><div class="stack" style="margin-top:12px"><button class="btn secondary" onclick="exportData()">Export My Data</button>${s.demo?'<button class="btn danger" onclick="startDemo()">Reset Demo Data</button>':''}</div></section><section class="card"><strong>Help</strong><div class="muted">Replay the guided tour and learn every area of أمانة.</div><button class="btn ghost" style="margin-top:10px" onclick="s.tour=false;save();render()">Replay tour</button></section></main>`}
 function nav(){return `<nav class="nav">${[['home','⌂','Home'],['progress','◔','Progress'],['deen','☪','Deen'],['us','♡','Us']].map(([id,i,l])=>`<button class="${s.screen===id?'active':''}" onclick="go('${id}')"><div>${i}</div>${l}</button>`).join('')}</nav>`}
 function render(){document.body.classList.toggle('dark',s.theme==='dark');document.body.classList.toggle('girl-theme',s.profile.visualMode==='girl');document.body.classList.toggle('ocean-theme',s.profile.visualMode==='ocean');const app=document.getElementById('app');if(!authReady){app.innerHTML='';return}app.innerHTML=(!s.auth&&!s.demo)?authPage():(!s.tour?onboarding():header()+page()+nav())}
-function page(){switch(s.screen){case'progress':return progress();case'deen':return deen();case'us':return us();case'growHub':return growHub();case'myGoals':return myGoals();case'herGoals':return herGoals();case'ourGoals':return ourGoals();case'quranTogether':return quranTogether();case'grow':return grow();case'ourg':return ourg();case'courses':return courses();case'deenTogether':return deenTogether();case'hadithTogether':return hadithTogetherPage();case'beforeMarriage':return future();case'future':return future();case'journey':return journeyPage();case'notes':return notes();case'search':return searchPage();case'settings':return settings();default:return home()}}
-window.addEventListener('online',function(){if(s.auth){flushOutbox().then(()=>hydrateCoreData()).catch(()=>render())}else render()});
+function page(){switch(s.screen){case'progress':return progress();case'deen':return deen();case'us':return us();case'growHub':return growHub();case'myGoals':return myGoals();case'herGoals':return herGoals();case'ourGoals':return ourGoals();case'quranTogether':return quranTogether();case'grow':return grow();case'ourg':return ourg();case'courses':return courses();case'deenTogether':return deenTogether();case'hadithTogether':return hadithTogetherPage();case'future':return future();case'journey':return journeyPage();case'notes':return notes();case'search':return searchPage();case'settings':return settings();default:return home()}}
+window.addEventListener('online',function(){if(s.auth)render()});
 window.addEventListener('offline',function(){if(s.auth)render()});
 render();
 setTimeout(()=>{if(!authReady){authReady=true;render()}hideSplash()},6500);
 initAuth();
 if('serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js').catch(()=>{});
-</script></body></htmlasync function cloudUpdate(table,values,filters={}){
-  if(!sb||!s.auth)return null;
-  if(navigator.onLine===false){enqueueOutbox({op:'update',table,values,filters});return null}
-  let q=sb.from(table).update(values);
-  Object.entries(filters||{}).forEach(([k,v])=>{if(v!==undefined&&v!==null)q=q.eq(k,v)});
-  const r=await q;
-  if(r.error){
-    if(isNetworkError(r.error)){enqueueOutbox({op:'update',table,values,filters});return null}
-    toast('Sync error: '+r.error.message);
-  }
-  return r.error||null;
-}
-async function cloudDeleteWhere(table,filters={}){
-  if(!sb||!s.auth)return null;
-  if(navigator.onLine===false){enqueueOutbox({op:'delete',table,filters});return null}
-  let q=sb.from(table).delete();
-  Object.entries(filters||{}).forEach(([k,v])=>{if(v!==undefined&&v!==null)q=q.eq(k,v)});
-  const r=await q;
-  if(r.error){
-    if(isNetworkError(r.error)){enqueueOutbox({op:'delete',table,filters});return null}
-    toast('Sync error: '+r.error.message);return r.error
-  }
-  return null;
-}
->
+</script></body></html>
