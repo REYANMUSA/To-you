@@ -1510,29 +1510,32 @@ function familyLater(){
   openSheet(modal('Family','<div class="center"><div class="big">😂</div><h3>Okay, okay…</h3><div class="stack" style="text-align:left;margin-top:12px"><div class="item">😭 I know this topic can make you uncomfortable sometimes.</div><div class="item">😂 So I removed the awkward stuff instead of making it a whole section.</div><div class="item">🫡 Family planning can wait for the right chapter.</div><div class="item">📦 Future-you can open this box when the time is right.</div></div><button class="btn secondary" style="width:100%;margin-top:12px" onclick="closeSheet()">Fair enough 😂</button></div>'));
 }
 function future(){
+  const shared=(s.sharedGoals||[]).filter(g=>['marriage','family','money','education','career','character','deen','future'].includes(g.category||'future'));
   const areas=[
-    {id:'deen',icon:'🕌',title:'Deen',sub:'Build the foundation that comes before everything else.',items:['Prayer and consistency','Qur’an and Muraaja','Sahih Hadith and Islamic knowledge']},
-    {id:'dating',icon:'❤️',title:'Dating',sub:'Prepare for a purposeful, respectful path toward halal marriage.',items:['Boundaries and communication','Understanding expectations','Learning what healthy responsibility looks like']},
-    {id:'educationCareer',icon:'🎓',title:'Education & Career',sub:'Become capable before taking on a family responsibility.',items:['Education goals','Skills and courses','Career direction and real work']},
-    {id:'money',icon:'💰',title:'Financial Preparation',sub:'Learn to earn, save, plan, and carry responsibility.',items:['Income and skills','Saving and budgeting','Future family responsibility']},
-    {id:'character',icon:'🌱',title:'Character',sub:'Work on the person you will bring into marriage.',items:['Patience and self-control','Honesty and responsibility','Communication and repairing mistakes']}
+    ['🕌','Deen','deen'],
+    ['🎓','Education','education'],
+    ['🧭','Career','career'],
+    ['💰','Financial preparation','money'],
+    ['🌱','Character & discipline','character'],
+    ['💍','Marriage preparation','marriage'],
+    ['🤝','Relationship → marriage','relationship']
   ];
-  const cards=areas.map(a=>'<button class="suggestionPreset" onclick="futureArea(\''+a.id+'\')"><span class="milestoneCircle">'+a.icon+'</span><span><strong>'+a.title+'</strong><small>'+a.sub+'</small></span></button>').join('');
-  const shared=(s.sharedGoals||[]).filter(g=>['deen','dating','educationCareer','money','character'].includes(g.category));
-  const goals=shared.length?'<h3 class="sectionTitle">What we are building</h3>'+shared.map(g=>'<section class="card"><div class="row"><div><strong>'+esc(g.title)+'</strong><div class="muted">'+esc(g.category||'')+'</div></div><span class="pill">'+Math.round(g.progress||0)+'%</span></div><div class="progress" style="margin-top:10px"><i style="width:'+Math.max(0,Math.min(100,g.progress||0))+'%"></i></div><div class="row" style="margin-top:10px"><span class="muted small">'+(g.progress>=100?'Complete':g.progress===0?'Not started':'In progress')+'</span><button class="btn secondary" onclick="editSharedGoal(\''+g.id+'\')">Manage</button></div></section>').join(''):'<section class="card"><div class="eyebrow">START SMALL</div><strong>Nothing shared yet.</strong><div class="muted" style="margin-top:4px">Open an area above and turn it into one real goal.</div></section>';
-  return '<main class="page"><button class="back" onclick="go(\'us\')">‹ Us</button><div><div class="eyebrow">ME + HER → FUTURE</div><h1 style="margin:0">Before Marriage</h1><div class="muted" style="margin-top:4px">Build yourselves separately before you build a life together.</div></div><section class="card"><strong>Prepare, don’t rush.</strong><div class="muted">Choose an area. Each one has practical things to work on — not another Home dashboard.</div><div class="suggestionPresetGrid" style="margin-top:12px">'+cards+'</div></section>'+goals+'<section class="card center"><button class="btn ghost" style="width:100%" onclick="familyLater()">👨‍👩‍👧 Family · later</button></section></main>';
+  const cards=areas.map(a=>'<button class="suggestionPreset" onclick="futureArea(\''+a[2]+'\')"><span class="milestoneCircle">'+a[0]+'</span><span><strong>'+a[1]+'</strong><small>Open</small></span></button>').join('');
+  const goals=shared.length?shared.map(g=>'<section class="card"><div class="row"><div><strong>'+esc(g.title)+'</strong><div class="muted">'+esc(g.category||'future')+(g.target?' · '+esc(g.target):'')+'</div></div><span>'+Math.round(g.progress||0)+'%</span></div><div class="progress" style="margin-top:10px"><i style="width:'+Math.max(0,Math.min(100,g.progress||0))+'%"></i></div><div class="row" style="margin-top:10px"><span class="pill">'+(g.progress>=100?'Complete':g.progress===0?'Not started':'In progress')+'</span><button class="btn secondary" onclick="editSharedGoal(\''+g.id+'\')">Manage</button></div></section>').join(''):'<div class="empty">No Before Marriage goals yet.</div>';
+  return '<main class="page"><button class="back" onclick="go(\'us\')">‹ Us</button><div class="row"><div><div class="eyebrow">ME + HER → FUTURE</div><h1 style="margin:0">Before Marriage</h1><div class="muted" style="margin-top:4px">What you build before the future arrives.</div></div></div><section class="card"><strong>Build before marriage</strong><div class="muted">Pick an area and turn it into real work.</div><div class="suggestionPresetGrid" style="margin-top:12px">'+cards+'</div></section>'+goals+'<section class="card center"><button class="btn ghost" style="width:100%" onclick="familyLater()">👨‍👩‍👧 Family · later</button></section></main>';
 }
 function futureArea(category){
   const map={
-    deen:{icon:'🕌',title:'Deen',text:'Strengthen the foundation: prayer, Qur’an, Muraaja, Sahih Hadith, and useful Islamic knowledge.',items:['Keep the five prayers consistent','Set a Qur’an / Muraaja goal','Learn and practice one authentic Hadith']},
-    dating:{icon:'❤️',title:'Dating',text:'This is not a chat or dating app. It is preparation for a respectful, purposeful path toward halal marriage.',items:['Learn healthy boundaries','Learn clear and respectful communication','Understand marriage expectations and responsibilities']},
-    educationCareer:{icon:'🎓',title:'Education & Career',text:'Build knowledge, skills, and a direction that makes you more capable.',items:['Set an education target','Choose a useful skill or course','Create something real with the skill']},
-    money:{icon:'💰',title:'Financial Preparation',text:'Learn the habits behind responsible financial life before marriage.',items:['Learn budgeting','Build an earning skill','Practice saving and responsible spending']},
-    character:{icon:'🌱',title:'Character',text:'Marriage brings responsibility. Work on the character you carry into it.',items:['Practice patience and self-control','Keep promises and take responsibility','Learn to repair mistakes without ego']}
+    deen:{icon:'🕌',title:'Deen',text:'Prayer, Qur’an, hadith, character, and beneficial Islamic learning.'},
+    education:{icon:'🎓',title:'Education',text:'Build knowledge, finish your studies, and keep learning useful things.'},
+    career:{icon:'🧭',title:'Career',text:'Build skills, create real things, and become capable before the next chapter.'},
+    money:{icon:'💰',title:'Financial preparation',text:'Learn earning, saving, responsible spending, and future responsibility.'},
+    character:{icon:'🌱',title:'Character & discipline',text:'Practice patience, honesty, discipline, responsibility, and good character.'},
+    marriage:{icon:'💍',title:'Marriage preparation',text:'Learn the responsibilities, expectations, rights, duties, and practical preparation that come with marriage.'},
+    relationship:{icon:'🤝',title:'Relationship → marriage',text:'Keep things purposeful and respectful, with the goal of becoming ready for a halal future.'}
   };
   const x=map[category]||map.character;
-  const list=x.items.map((item,i)=>'<div class="item" style="margin-top:8px"><span class="pill">'+(i+1)+'</span> '+item+'</div>').join('');
-  openSheet(modal(x.icon+' '+x.title,'<div><div class="big center">'+x.icon+'</div><h2>'+x.title+'</h2><p class="muted">'+x.text+'</p><div style="margin-top:12px">'+list+'</div><button class="btn" style="width:100%;margin-top:14px" onclick="closeSheet();addSharedGoal(\''+category+'\',\''+x.title+'\')">＋ Turn this into a shared goal</button><button class="btn ghost" style="width:100%;margin-top:8px" onclick="closeSheet()">Close</button></div>'));
+  openSheet(modal(x.icon+' '+x.title,'<div class="center"><div class="big">'+x.icon+'</div><h3>'+x.title+'</h3><p class="muted">'+x.text+'</p><button class="btn" style="width:100%" onclick="closeSheet();addSharedGoal(\''+(category==='relationship'?'marriage':category)+'\',\''+x.title+'\')">＋ Add a shared goal</button><button class="btn ghost" style="width:100%;margin-top:8px" onclick="closeSheet()">Close</button></div>'));
 }
 function journeyPage(){
   const milestones=[...(s.journeyMilestones||[])].sort((a,b)=>milestoneNextDate(a.date,a.repeatYearly)-milestoneNextDate(b.date,b.repeatYearly));
@@ -1674,7 +1677,7 @@ function us(){
     '<section class="card" onclick="go(\'courses\')" style="cursor:pointer"><div class="row"><div><strong>Courses</strong><div class="muted">Learn, review, and build useful skills.</div></div><span class="pill">›</span></div></section>'+
     '<section class="card" onclick="go(\'deenTogether\')" style="cursor:pointer"><div class="row"><div><strong>Deen Together</strong><div class="muted">Shared Qur’an, Hadith, and learning.</div></div><span class="pill">›</span></div></section>'+
     deenChallengeResult()+
-    '<section class="card" onclick="go(\'future\')" style="cursor:pointer"><div class="row"><div><strong>Before Marriage</strong><div class="muted">Prepare your deen, education, career, character, and marriage responsibly.</div></div><span class="pill">›</span></div></section>'+
+    '<section class="card" onclick="go(\'beforeMarriage\')" style="cursor:pointer"><div class="row"><div><strong>Before Marriage</strong><div class="muted">Prepare your deen, education, career, character, and marriage responsibly.</div></div><span class="pill">›</span></div></section>'+
     '<section class="card" onclick="go(\'journey\')" style="cursor:pointer"><div class="row"><div><strong>Our Journey</strong><div class="muted">Remember the moments that shaped your story.</div></div><span class="pill">›</span></div></section>'+
     '</main>';
 }
