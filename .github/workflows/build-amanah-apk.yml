@@ -1,0 +1,45 @@
+name: Build Amanah APK
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.9'
+
+      - name: Prepare web assets
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p app/src/main/assets/www
+          cp index.html config.js manifest.webmanifest icon-v2.svg app/src/main/assets/www/
+          printf '%s\n' "self.addEventListener('install',e=>e.waitUntil(self.skipWaiting()));self.addEventListener('activate',e=>e.waitUntil(self.clients.claim()));" > app/src/main/assets/www/sw.js
+
+      - name: Build debug APK
+        run: gradle --no-daemon assembleDebug
+
+      - name: Upload Amanah APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: amanah-apk
+          path: app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
+          retention-days: 7

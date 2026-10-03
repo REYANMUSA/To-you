@@ -21,7 +21,7 @@ body.dark{--bg:#171a17;--card:#20241f;--text:#f1f3ef;--muted:#aab1a9;--line:#343
 .streakStats{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-top:10px}.streakStats>div{padding:10px;border:1px solid var(--line);border-radius:14px;background:var(--bg);text-align:center}.streakStats strong{display:block;font-size:16px}.streakStats span{display:block;color:var(--muted);font-size:11px;margin-top:2px}.streakDays{display:flex;justify-content:space-between;gap:6px;margin-top:14px}.streakDay{flex:1;display:grid;justify-items:center;gap:5px;color:var(--muted);font-size:10px}.streakDay i{display:block;width:12px;height:12px;border-radius:50%;border:1px solid var(--line);background:var(--card)}.streakDay.done i{background:var(--accent);border-color:var(--accent);box-shadow:0 0 0 3px var(--soft)}.quranStreakGrid{display:grid;grid-template-columns:1fr 1fr;gap:9px}.quranStreakPerson{background:var(--bg);border:1px solid var(--line);border-radius:16px;padding:12px;text-align:left}.quranStreakPerson .streakDays{margin-top:9px}.quranStreakPerson:active{transform:scale(.985)}.courseMeta{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px}.courseMeta span{padding:7px 9px;border:1px solid var(--line);border-radius:11px;background:var(--bg);font-size:12px;font-weight:700}.courseNotes{margin-top:14px;padding:12px;border:1px dashed var(--line);border-radius:13px}.reviewRow{padding:11px 0;border-bottom:1px solid var(--line)}.reviewRow:last-child{border-bottom:0}.pressHint{margin-top:9px}.milestoneList{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}.milestoneChip{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px;min-width:0;min-height:104px;padding:10px 6px;text-align:center;background:var(--bg);border:1px solid var(--line);border-radius:17px}.milestoneCircle{width:42px;height:42px;flex:0 0 42px;border-radius:50%;display:grid;place-items:center;background:var(--soft);border:1px solid var(--line);font-size:19px}.milestoneChip strong{display:block;font-size:12px}.milestoneChip small{display:block;margin-top:2px;color:var(--muted);font-size:10px;line-height:1.2}.milestoneChoices{display:grid;grid-template-columns:1fr 1fr;gap:8px}.milestoneChoice{display:flex;align-items:center;gap:8px;padding:11px;border:1px solid var(--line);border-radius:13px;background:var(--bg);text-align:left}.milestoneChoice.selected{border-color:var(--accent);box-shadow:0 0 0 2px var(--soft)}.milestoneAction{display:flex;align-items:center;gap:12px;padding:5px 0 15px}.milestoneAction .milestoneCircle{width:48px;height:48px;flex-basis:48px}.field.hidden{display:none!important}
 <style>
 .suggestionPresetGrid{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:10px}.suggestionPreset{display:flex;align-items:center;gap:9px;padding:11px;border:1px solid var(--line);border-radius:15px;background:var(--bg);text-align:left}.suggestionPreset.selected{border-color:var(--accent);box-shadow:0 0 0 2px var(--soft)}.suggestionPreset small{display:block;margin-top:2px;color:var(--muted);font-size:10px;line-height:1.2}.suggestionItem{margin-top:9px}.suggestionItem h3{font-size:14px}.authLogo img{width:74px;height:74px;display:block;margin:0 auto 12px}.authTag{font-size:16px;font-weight:700}.splashName{font-size:26px}@media(max-width:380px){.suggestionPresetGrid{grid-template-columns:1fr}}
-.hadithArabic{font-size:23px;line-height:2.05;text-align:right;margin-top:14px;font-family:serif}.hadithArabicSmall{font-size:18px;line-height:1.9;margin-top:8px}.growCard{transition:transform .15s ease}.growCard:active{transform:scale(.985)}</style></style><script src="./config.js"></script><script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+.hadithArabic{font-size:23px;line-height:2.05;text-align:right;margin-top:14px;font-family:serif}.hadithArabicSmall{font-size:18px;line-height:1.9;margin-top:8px}.growCard{transition:transform .15s ease}.growCard:active{transform:scale(.985)}</style></style><script src="./config.js"></script>
 </head>
 <body><div id="splash"><div class="splashInner"><div class="splashLogo"><img src="./icon-v2.svg" alt="أمانة"></div><div class="splashName" dir="rtl">أمانة</div></div></div><div id="app" class="app"></div>
 <script>
@@ -29,9 +29,34 @@ const BASE_KEY='toyou_phase5_v1';
 let KEY=BASE_KEY;
 const SUPABASE_URL=window.TOYOU_SUPABASE_URL||'YOUR_SUPABASE_URL';
 const SUPABASE_ANON_KEY=window.TOYOU_SUPABASE_ANON_KEY||'YOUR_SUPABASE_ANON_KEY';
-const REAL_AUTH=typeof supabase!=='undefined' && !SUPABASE_URL.startsWith('YOUR_') && !SUPABASE_ANON_KEY.startsWith('YOUR_');
-let sb=REAL_AUTH?supabase.createClient(SUPABASE_URL,SUPABASE_ANON_KEY):null;
-let authReady=!sb;
+const HAS_REAL_CONFIG=!SUPABASE_URL.startsWith('YOUR_') && !SUPABASE_ANON_KEY.startsWith('YOUR_');
+let sb=null;
+let authReady=true;
+let supabaseBootStarted=false;
+function startSupabase(){
+  if(sb||!HAS_REAL_CONFIG||supabaseBootStarted)return;
+  supabaseBootStarted=true;
+  const finish=()=>{
+    try{
+      if(!window.supabase)throw new Error('Supabase library did not load');
+      sb=window.supabase.createClient(SUPABASE_URL,SUPABASE_ANON_KEY);
+      initAuth();
+    }catch(e){
+      supabaseBootStarted=false;
+      toast('Online sign-in is unavailable right now. The app is still open.');
+    }
+  };
+  if(window.supabase){finish();return}
+  const script=document.createElement('script');
+  script.src='https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2';
+  script.async=true;
+  script.onload=finish;
+  script.onerror=()=>{
+    supabaseBootStarted=false;
+    toast('Online sign-in is unavailable right now. The app is still open.');
+  };
+  document.head.appendChild(script);
+}
 const fresh={profile:{id:'',name:'',email:'',avatar:'',provider:'',accent:'#718c73',visualMode:'classic'},partner:null,screen:'home',theme:'light',tour:false,auth:false,demo:false,signup:false,connected:false,connectionCode:'',habits:[],habitCompletions:{},tasks:[],taskCompletions:{},goals:[],sharedGoals:[],dhikr:0,dhikrDate:'',dhikrCounts:{astaghfirullah:0,subhanallah:0,alhamdulillah:0,la_ilaha_illallah:0},prayer:{Fajr:true,Dhuhr:true,Asr:true,Maghrib:true,Isha:true},hadithLearned:[],dailyHadith:null,hadithCourse:[],quran:{goal:'',progress:0},quranUsDaily:null,quranUsProgress:[],quranUsAyahs:[],courses:[],courseReviews:[],journey:[],journeyMilestones:[],future:[],notes:[],reflections:[],achievements:[],needSent:false,notifications:[],suggestions:[],search:'',settings:{notifications:true,dark:false}};
 const demoSeed={habits:[{id:'h1',name:'Study for 30 minutes',frequency:'Daily'},{id:'h2',name:'Exercise',frequency:'Daily'},{id:'h3',name:'Read',frequency:'Daily'}],tasks:[{id:'t1',title:"Finish today's work",date:todayKey()},{id:'t2',title:'Review notes',date:todayKey()}],goals:[{id:'g1',title:'Become a better version of myself',progress:42,target:'2027-01-01'},{id:'g2',title:'Build something real',progress:25,target:'2026-12-31'}],quran:{goal:'Read 10 pages a day',progress:4},courses:[{id:'c1',owner:'me',name:'Web Development',progress:35,status:'In progress'}],journey:[{id:'j1',date:'2024-01-01',title:'The day we met',type:'past',desc:'A meaningful beginning.',photo:''}],future:[{id:'f1',title:'Education',desc:'Keep building knowledge.'},{id:'f2',title:'Career',desc:'Become capable of creating real things.'}],dhikr:37,hadithLearned:[1],achievements:['demo'],partner:{name:'Demo Her',email:'her@demo.toyou.app',avatar:'',provider:'demo'},connected:true};
 let s=load();
@@ -1779,7 +1804,8 @@ function page(){switch(s.screen){case'progress':return progress();case'deen':ret
 window.addEventListener('online',function(){if(s.auth)render()});
 window.addEventListener('offline',function(){if(s.auth)render()});
 render();
-setTimeout(()=>{if(!authReady){authReady=true;render()}hideSplash()},6500);
-initAuth();
+hideSplash();
+setTimeout(hideSplash,1500);
+startSupabase();
 if('serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js').catch(()=>{});
 </script></body></html>
