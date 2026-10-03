@@ -622,12 +622,19 @@ async function saveCourseEdit(id){
   const err=await cloudUpsert('courses',{id:c.id,user_id:s.profile.id,couple_id:c.coupleId||null,title:name,progress,status,duration_days:duration,days_per_week:daysWeek,notes,start_date:start,target_date:targetDate});if(err)return;
   Object.assign(c,{name,progress,status,durationDays:duration,daysPerWeek:daysWeek,notes,startDate:start,targetDate:targetDate});save();closeSheet();render();toast('Course updated ✓');
 }
-async function deleteCourse(id){
-  const c=s.courses.find(x=>x.id===id);if(!c||c.owner!=='me')return;if(!confirm('Delete this course and its reviews?'))return;
+function deleteCourse(id){
+  const c=s.courses.find(x=>x.id===id);if(!c||c.owner!=='me')return toast('Only your course can be deleted');
+  openSheet(modal('Delete course',
+    '<section class="item"><div class="eyebrow">ARE YOU SURE?</div><strong>'+esc(c.name)+'</strong><div class="muted small" style="margin-top:5px">This removes the course and its reviews for you. This cannot be undone.</div></section>'+
+    '<button class="btn danger" style="width:100%;margin-top:12px" onclick="confirmDeleteCourse(\''+id+'\')">Delete course</button>'+
+    '<button class="btn ghost" style="width:100%;margin-top:8px" onclick="closeSheet()">Cancel</button>'));
+}
+async function confirmDeleteCourse(id){
+  const c=s.courses.find(x=>x.id===id);if(!c||c.owner!=='me')return toast('Only your course can be deleted');
   const reviewIds=(s.courseReviews||[]).filter(r=>r.courseId===id&&r.userId===s.profile.id).map(r=>r.id);
   for(const rid of reviewIds){const re=await cloudDelete('course_reviews',rid,{user_id:s.profile.id});if(re)return}
   const err=await cloudDelete('courses',id,{user_id:s.profile.id});if(err)return;
-  s.courses=s.courses.filter(x=>x.id!==id);s.courseReviews=(s.courseReviews||[]).filter(r=>r.courseId!==id);save();render();toast('Course deleted');
+  s.courses=s.courses.filter(x=>x.id!==id);s.courseReviews=(s.courseReviews||[]).filter(r=>r.courseId!==id);save();closeSheet();render();toast('Course deleted ✓');
 }
 function editCourse(id){
   const c=s.courses.find(x=>x.id===id);if(!c)return;if(c.owner!=='me')return toast('Her course is view-only');
