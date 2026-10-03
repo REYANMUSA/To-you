@@ -750,7 +750,7 @@ async function deleteJourneyEvent(id){
   const item=s.journey.find(x=>x.id===id);if(!item)return;
   if(!confirm('Delete this journey memory?'))return;
   const err=await cloudDelete('journey_events',id);if(err)return;
-  try{await sb.from('journey_media').delete().eq('journey_event_id',id)}catch{}
+  await cloudDeleteWhere('journey_media',{journey_event_id:id});
   s.journey=s.journey.filter(x=>x.id!==id);save();render();toast('Journey memory deleted');
 }
 async function saveJourneyEdit(id){
@@ -886,6 +886,7 @@ async function saveQuranGoal(){const title=document.getElementById('quranTitle')
 function quranGoal(){const q=(s.quranGoals&&s.quranGoals[0])||{title:'',progress:0};openSheet(modal('Qur’an goal',`<div class="field"><label>Goal</label><input id="quranTitle" value="${esc(q.title)}" placeholder="Read Qur’an consistently"></div><div class="field"><label>Progress: <span id="quranPv">${q.progress}</span>%</label><input id="quranProgress" type="range" min="0" max="100" value="${q.progress}" oninput="document.getElementById('quranPv').textContent=this.value"></div><button class="btn" style="width:100%" onclick="saveQuranGoal()">Save goal</button>`))}
 async function hydrateQuranUs(){
   if(!sb||!s.auth||!s.connected||!s.partner?.coupleId)return;
+  if(navigator.onLine===false)return;
   const date=todayKey(),start=new Date();start.setDate(start.getDate()-365),monthStart=new Date(new Date().getFullYear(),new Date().getMonth(),1);
   const [daily,progress,ayahs,restores]=await Promise.all([
     sb.from('quran_muraajaah_daily').select('*').eq('couple_id',s.partner.coupleId).eq('quran_date',date).maybeSingle(),
@@ -932,11 +933,20 @@ async function restoreQuranMuraajaah(){
   const before=new Date(d);before.setDate(d.getDate()-1);const beforeKey=localDateKey(before);
   if(!(s.quranUsProgress||[]).some(x=>x.user_id===s.profile.id&&x.quran_date===beforeKey&&x.pages_completed===3))return toast('No recent broken Qur’an streak to restore');
   if(!await ensureQuranDaily(missed))return;
-  const ins=await sb.from('quran_muraajaah_restores').insert({id:crypto.randomUUID(),couple_id:s.partner.coupleId,user_id:s.profile.id,restored_date:missed}).select('id').single();
-  if(ins.error)return toast(ins.error.code==='23505'?'That day is already restored':'Qur’an restore failed: '+ins.error.message);
-  const now=new Date().toISOString(),row={couple_id:s.partner.coupleId,quran_date:missed,user_id:s.profile.id,pages_completed:3,completed_at:now,updated_at:now};
-  const prog=await sb.from('quran_muraajaah_progress').upsert(row,{onConflict:'couple_id,quran_date,user_id'});
-  if(prog.error){await sb.from('quran_muraajaah_restores').delete().eq('id',ins.data?.id);return toast('Could not save restored Qur’an progress: '+prog.error.message)}
+  const restoreId=crypto.randomUUID(),restoreRow={id:restoreId,couple_id:s.partner.coupleId,user_id:s.profile.id,restored_date:missed},now=new Date().toISOString(),row={couple_id:s.partner.coupleId,quran_date:missed,user_id:s.profile.id,pages_completed:3,completed_at:now,updated_at:now};
+  if(navigator.onLine===false){
+    enqueueOutbox({op:'upsert',table:'quran_muraajaah_restores',row:restoreRow,options:{onConflict:'id'}});
+    enqueueOutbox({op:'upsert',table:'quran_muraajaah_progress',row,options:{onConflict:'couple_id,quran_date,user_id'}});
+    s.quranUsProgress=[...(s.quranUsProgress||[]).filter(x=>!(x.user_id===s.profile.id&&x.quran_date===missed)),row];
+    s.quranMuraajaahRestoresUsed=(s.quranMuraajaahRestoresUsed||0)+1;save();render();toast('🔥 Qur’an streak restored offline · will sync ✓');return;
+  }
+  const ins=await sb.from('quran_muraajaah_restores').insert(restoreRow).select('id').single();
+  if(ins.error){
+    if(isNetworkError(ins.error)){enqueueOutbox({op:'upsert',table:'quran_muraajaah_restores',row:restoreRow,options:{onConflict:'id'}});enqueueOutbox({op:'upsert',table:'quran_muraajaah_progress',row,options:{onConflict:'couple_id,quran_date,user_id'}});s.quranUsProgress=[...(s.quranUsProgress||[]).filter(x=>!(x.user_id===s.profile.id&&x.quran_date===missed)),row];s.quranMuraajaahRestoresUsed=(s.quranMuraajaahRestoresUsed||0)+1;save();render();toast('🔥 Qur’an streak restored offline · will sync ✓');return}
+    return toast(ins.error.code==='23505'?'That day is already restored':'Qur’an restore failed: '+ins.error.message);
+  }
+  const prog=await cloudUpsert('quran_muraajaah_progress',row,{onConflict:'couple_id,quran_date,user_id'});
+  if(prog)return;
   s.quranUsProgress=[...(s.quranUsProgress||[]).filter(x=>!(x.user_id===s.profile.id&&x.quran_date===missed)),row];
   s.quranMuraajaahRestoresUsed=(s.quranMuraajaahRestoresUsed||0)+1;save();render();toast('🔥 Qur’an streak restored • '+quranStreakRestoresLeft()+' left');
 }
@@ -1147,13 +1157,7 @@ function hadithTogetherPage(){
 
 
 
-async function ensureQuranDaily(date=todayKey()){
-  if(!sb||!s.auth||!s.connected||!s.partner?.coupleId)return false;
-  const row={id:crypto.randomUUID(),couple_id:s.partner.coupleId,quran_date:date,target_pages:3},r=await sb.from('quran_muraajaah_daily').upsert(row,{onConflict:'couple_id,quran_date'});
-  if(r.error){toast('Could not create Qur’an target: '+r.error.message);return false}
-  if(date===todayKey())s.quranUsDaily=Object.assign({target_pages:3},s.quranUsDaily||{},row,{couple_id:s.partner.coupleId,quran_date:date,target_pages:3});
-  return true;
-}
+
 
 
 
@@ -1282,14 +1286,13 @@ function journeyPage(){
 function notes(){return '<main class="page"><div class="row"><h1>Notes</h1><button class="btn secondary" onclick="addNote()">+ New</button></div>'+(s.notes.length?s.notes.map(n=>'<section class="card"><div class="row"><strong>'+esc(n.title)+'</strong><button class="icon" title="Delete note" onclick="deleteNote(\''+n.id+'\')">×</button></div><p class="muted">'+esc(n.body)+'</p></section>').join(''):'<div class="empty">Private notes live here.</div>')+'</main>'}
 function searchPage(){let q=s.search.toLowerCase();let all=[...s.habits.map(x=>({t:x.name,c:'Habit'})),...s.tasks.map(x=>({t:x.title,c:'Task'})),...s.goals.map(x=>({t:x.title,c:'Goal'})),...s.courses.map(x=>({t:x.name,c:'Course'})),...s.journey.map(x=>({t:x.title,c:'Journey'})),...s.notes.map(x=>({t:x.title,c:'Note'}))];let r=all.filter(x=>!q||x.t.toLowerCase().includes(q));return `<main class="page"><h1>Search</h1><div class="field"><input id="searchInput" value="${esc(s.search)}" oninput="search()" placeholder="Search habits, tasks, goals, courses, journey..."></div>${r.map(x=>`<div class="item" style="margin:8px 0"><strong>${esc(x.t)}</strong><div class="muted">${x.c}</div></div>`).join('')||'<div class="empty">Nothing found.</div>'}</main>`}
 async function persistPreferences(){
-  if(!sb||!s.auth)return;
-  const {error}=await sb.from('profiles').update({
+  const err=await cloudUpdate('profiles',{
     visual_mode:s.profile.visualMode||'classic',
     dark_mode:s.theme==='dark',
     notifications:!!s.settings.notifications,
     updated_at:new Date().toISOString()
-  }).eq('id',s.profile.id);
-  if(error)toast('Settings could not sync: '+error.message);
+  },{id:s.profile.id});
+  if(err)toast('Settings could not sync: '+err.message);
 }
 async function setThemeMode(){s.theme=s.theme==='dark'?'light':'dark';save();render();await persistPreferences()}
 async function setVisualMode(mode){s.profile.visualMode=mode==='girl'?'girl':mode==='ocean'?'ocean':'classic';save();render();await persistPreferences()}
@@ -1389,5 +1392,17 @@ if('serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js').cat
     toast('Sync error: '+r.error.message);
   }
   return r.error||null;
+}
+async function cloudDeleteWhere(table,filters={}){
+  if(!sb||!s.auth)return null;
+  if(navigator.onLine===false){enqueueOutbox({op:'delete',table,filters});return null}
+  let q=sb.from(table).delete();
+  Object.entries(filters||{}).forEach(([k,v])=>{if(v!==undefined&&v!==null)q=q.eq(k,v)});
+  const r=await q;
+  if(r.error){
+    if(isNetworkError(r.error)){enqueueOutbox({op:'delete',table,filters});return null}
+    toast('Sync error: '+r.error.message);return r.error
+  }
+  return null;
 }
 >
