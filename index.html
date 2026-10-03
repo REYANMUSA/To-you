@@ -26,6 +26,7 @@ body.dark{--bg:#171a17;--card:#20241f;--text:#f1f3ef;--muted:#aab1a9;--line:#343
 <body><div id="splash"><div class="splashInner"><div class="splashLogo"><img src="./icon-v2.svg" alt="أمانة"></div><div class="splashName" dir="rtl">أمانة</div></div></div><div id="app" class="app"></div>
 <script>
 const BASE_KEY='toyou_phase5_v1';
+const LAST_USER_KEY=BASE_KEY+':lastUser';
 let KEY=BASE_KEY;
 const SUPABASE_URL=window.TOYOU_SUPABASE_URL||'YOUR_SUPABASE_URL';
 const SUPABASE_ANON_KEY=window.TOYOU_SUPABASE_ANON_KEY||'YOUR_SUPABASE_ANON_KEY';
@@ -96,7 +97,7 @@ function switchUserStorage(uid){
       if(legacy?.profile?.id===uid)localStorage.setItem(next,JSON.stringify(legacy));
     }catch{}
   }
-  KEY=next;
+  KEY=next;try{localStorage.setItem(LAST_USER_KEY,uid)}catch{};
   return load();
 }
 function esc(x){return String(x??'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]))}
@@ -163,7 +164,7 @@ function login(){s.signup=false;s.auth=false;s.demo=false;save();render()}
 function startDemo(){s=clone(fresh);Object.assign(s,clone(demoSeed));s.demo=true;s.auth=false;s.profile={name:'Demo Me',email:'demo@toyou.app',avatar:'',provider:'demo',accent:'#718c73'};s.tour=true;save();render();toast('Demo mode started')}
 async function googleLogin(){if(!sb)return toast('Add Supabase URL + anon key first');const {error}=await sb.auth.signInWithOAuth({provider:'google',options:{redirectTo:location.origin+location.pathname}});if(error)toast(error.message)}
 async function emailAuth(){let e=document.getElementById('loginEmail').value.trim(),p=document.getElementById('loginPass').value;if(!e||p.length<6)return toast('Use a valid email and 6+ character password');if(!sb)return toast('Add Supabase URL + anon key first');let r=s.signup?await sb.auth.signUp({email:e,password:p}):await sb.auth.signInWithPassword({email:e,password:p});if(r.error)return toast(r.error.message);if(s.signup&&r.data.user&&!r.data.session)return toast('Check your email to confirm your account')}
-async function signOut(){if(quranPollTimer){clearInterval(quranPollTimer);quranPollTimer=null}if(quranChannel&&sb){sb.removeChannel(quranChannel);quranChannel=null}if(usChannel&&sb){sb.removeChannel(usChannel);usChannel=null}if(usSyncTimer){clearTimeout(usSyncTimer);usSyncTimer=null}if(sb)await sb.auth.signOut();KEY=BASE_KEY;s=clone(fresh);render()}
+async function signOut(){try{localStorage.removeItem(LAST_USER_KEY)}catch{} if(quranPollTimer){clearInterval(quranPollTimer);quranPollTimer=null}if(quranChannel&&sb){sb.removeChannel(quranChannel);quranChannel=null}if(usChannel&&sb){sb.removeChannel(usChannel);usChannel=null}if(usSyncTimer){clearTimeout(usSyncTimer);usSyncTimer=null}if(sb)await sb.auth.signOut();KEY=BASE_KEY;s=clone(fresh);render()}
 let authQueue=Promise.resolve();
 let needChannel=null;
 let quranPollTimer=null;
@@ -284,8 +285,18 @@ function queueAuthSession(session){
   }).catch(e=>{authReady=true;render();hideSplash();toast('Session sync error: '+(e?.message||e))});
   return authQueue;
 }
+function bootCachedUserOffline(){
+  try{
+    const uid=localStorage.getItem(LAST_USER_KEY)||'';
+    if(!uid)return false;
+    const cached=JSON.parse(localStorage.getItem(BASE_KEY+':'+uid)||'null');
+    if(!cached?.profile?.id)return false;
+    s=cached;KEY=BASE_KEY+':'+uid;s.auth=true;s.demo=false;s.profile.id=uid;
+    authReady=true;render();hideSplash();return true;
+  }catch{return false}
+}
 function initAuth(){
-  if(!sb){authReady=true;render();hideSplash();return}
+  if(!sb){if(bootCachedUserOffline())return;authReady=true;render();hideSplash();return}
   sb.auth.onAuthStateChange((_event,session)=>{setTimeout(()=>queueAuthSession(session),0)});
   Promise.race([sb.auth.getSession(),new Promise((_,reject)=>setTimeout(()=>reject(new Error('Session restore timed out')),5000))]).then(({data})=>queueAuthSession(data.session)).catch(e=>{authReady=true;render();hideSplash();toast('Could not restore session: '+e.message)});
 }
