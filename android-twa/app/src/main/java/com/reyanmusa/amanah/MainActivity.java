@@ -21,7 +21,7 @@ public class MainActivity extends Activity {
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
 
-        webView = new WebView(getApplicationContext());
+        webView = new WebView(this);
         webView.setBackgroundColor(Color.rgb(247, 247, 244));
         webView.setWebViewClient(new WebViewClient() {
             @Override
@@ -29,12 +29,6 @@ public class MainActivity extends Activity {
                 handler.cancel();
             }
 
-            @Override
-            public void onReceivedError(WebView view, WebResourceRequest request, WebResourceError error) {
-                if (request.isForMainFrame()) {
-                    view.loadUrl(APP_URL);
-                }
-            }
         });
 
         WebSettings settings = webView.getSettings();
