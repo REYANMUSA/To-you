@@ -1,8 +1,55 @@
-const CACHE='amanah-v25-pwa-icons';
+const CACHE='amanah-v26-stable';
+const SUPABASE_JS='https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2';
 const CORE=['./','./index.html','./config.js','./manifest.webmanifest','./icon-v2.svg','./logo-ammanah.webp'];
-self.addEventListener('install',event=>event.waitUntil(caches.open(CACHE).then(cache=>cache.addAll(CORE)).then(()=>self.skipWaiting())));
-self.addEventListener('activate',event=>event.waitUntil(caches.keys().then(keys=>Promise.all(keys.filter(key=>key!==CACHE).map(key=>caches.delete(key)))).then(()=>self.clients.claim())));
-self.addEventListener('fetch',event=>{if(event.request.method!=='GET')return;const request=event.request;const isNavigation=request.mode==='navigate';event.respondWith((isNavigation?fetch(request).then(response=>{const copy=response.clone();caches.open(CACHE).then(cache=>cache.put(request,copy));return response}):caches.match(request).then(cached=>cached||fetch(request).then(response=>{const copy=response.clone();caches.open(CACHE).then(cache=>cache.put(request,copy));return response}))).catch(()=>caches.match(request).then(cached=>cached||caches.match('./index.html'))))});
 
-self.addEventListener('push',event=>{let data={title:'أمانة',body:'You have a new notification.'};try{data=event.data?event.data.json():data}catch{}event.waitUntil(self.registration.showNotification(data.title||'to you',{body:data.body||'',icon:'./icon-v2.svg',badge:'./icon-v2.svg',tag:data.tag||'to-you'}))});
-self.addEventListener('notificationclick',event=>{event.notification.close();event.waitUntil(clients.matchAll({type:'window',includeUncontrolled:true}).then(list=>{for(const c of list){if('focus' in c)return c.focus()}if(clients.openWindow)return clients.openWindow('./')}))});
+self.addEventListener('install',event=>event.waitUntil(
+  caches.open(CACHE)
+    .then(cache=>cache.addAll(CORE))
+    .then(()=>self.skipWaiting())
+));
+
+self.addEventListener('activate',event=>event.waitUntil(
+  caches.keys()
+    .then(keys=>Promise.all(keys.filter(key=>key!==CACHE).map(key=>caches.delete(key))))
+    .then(()=>self.clients.claim())
+));
+
+self.addEventListener('fetch',event=>{
+  if(event.request.method!=='GET')return;
+  const request=event.request;
+  const isNavigation=request.mode==='navigate';
+  const isSupabaseScript=request.url===SUPABASE_JS;
+  event.respondWith(
+    (isNavigation||isSupabaseScript
+      ?fetch(request).then(response=>{
+          const copy=response.clone();
+          caches.open(CACHE).then(cache=>cache.put(request,copy)).catch(()=>{});
+          return response
+        })
+      :caches.match(request).then(cached=>cached||fetch(request).then(response=>{
+          const copy=response.clone();
+          caches.open(CACHE).then(cache=>cache.put(request,copy)).catch(()=>{});
+          return response
+        }))
+    ).catch(()=>caches.match(request).then(cached=>cached||caches.match('./index.html')))
+  );
+});
+
+self.addEventListener('push',event=>{
+  let data={title:'أمانة',body:'You have a new notification.'};
+  try{data=event.data?event.data.json():data}catch{}
+  event.waitUntil(self.registration.showNotification(data.title||'أمانة',{
+    body:data.body||'',
+    icon:'./icon-v2.svg',
+    badge:'./icon-v2.svg',
+    tag:data.tag||'to-you'
+  }));
+});
+
+self.addEventListener('notificationclick',event=>{
+  event.notification.close();
+  event.waitUntil(clients.matchAll({type:'window',includeUncontrolled:true}).then(list=>{
+    for(const c of list){if('focus' in c)return c.focus()}
+    if(clients.openWindow)return clients.openWindow('./')
+  }));
+});
