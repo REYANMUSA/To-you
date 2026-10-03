@@ -3,7 +3,9 @@ on:
   workflow_dispatch:
   push:
     paths:
-      - 'app/**'
+      - 'index.html'
+      - 'config.js'
+      - 'manifest.webmanifest'
       - '.github/workflows/build-apk.yml'
 jobs:
   build:
@@ -17,8 +19,89 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.11.1'
-      - run: gradle :app:assembleDebug --no-daemon
-      - run: cp app/build/outputs/apk/debug/app-debug.apk Amanah-1.0.2.apk
+      - name: Create Android wrapper
+        shell: bash
+        run: |
+          mkdir -p app/src/main/java/com/amanah/app app/src/main/res/values
+          cat > settings.gradle <<'EOF'
+          pluginManagement { repositories { google(); mavenCentral(); gradlePluginPortal() } }
+          dependencyResolutionManagement { repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS); repositories { google(); mavenCentral() } }
+          rootProject.name='Amanah'
+          include ':app'
+          EOF
+          cat > build.gradle <<'EOF'
+          plugins { id 'com.android.application' version '8.7.3' apply false }
+          EOF
+          cat > app/build.gradle <<'EOF'
+          plugins { id 'com.android.application' }
+          android {
+            namespace 'com.amanah.app'
+            compileSdk 35
+            defaultConfig {
+              applicationId 'com.amanah.app'
+              minSdk 23
+              targetSdk 35
+              versionCode 102
+              versionName '1.0.2'
+            }
+          }
+          EOF
+          cat > app/src/main/res/values/styles.xml <<'EOF'
+          <resources>
+            <style name="AppTheme" parent="android:style/Theme.Material.Light.NoActionBar">
+              <item name="android:fontFamily">sans</item>
+              <item name="android:colorAccent">#6F8F78</item>
+              <item name="android:navigationBarColor">#FAF9F6</item>
+              <item name="android:statusBarColor">#FAF9F6</item>
+              <item name="android:windowLightStatusBar">true</item>
+            </style>
+          </resources>
+          EOF
+          cat > app/src/main/AndroidManifest.xml <<'EOF'
+          <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+            <uses-permission android:name="android.permission.INTERNET"/>
+            <application android:theme="@style/AppTheme" android:label="Amanah" android:hardwareAccelerated="true">
+              <activity android:name=".MainActivity" android:screenOrientation="portrait" android:exported="true">
+                <intent-filter>
+                  <action android:name="android.intent.action.MAIN"/>
+                  <category android:name="android.intent.category.LAUNCHER"/>
+                </intent-filter>
+              </activity>
+            </application>
+          </manifest>
+          EOF
+          cat > app/src/main/java/com/amanah/app/MainActivity.java <<'EOF'
+          package com.amanah.app;
+          import android.app.Activity;
+          import android.os.Bundle;
+          import android.webkit.WebChromeClient;
+          import android.webkit.WebSettings;
+          import android.webkit.WebView;
+          import android.webkit.WebViewClient;
+          public class MainActivity extends Activity {
+            private WebView webView;
+            @Override public void onCreate(Bundle savedInstanceState) {
+              super.onCreate(savedInstanceState);
+              webView = new WebView(this);
+              setContentView(webView);
+              WebSettings s = webView.getSettings();
+              s.setJavaScriptEnabled(true);
+              s.setDomStorageEnabled(true);
+              s.setDatabaseEnabled(true);
+              s.setMediaPlaybackRequiresUserGesture(false);
+              webView.setWebViewClient(new WebViewClient());
+              webView.setWebChromeClient(new WebChromeClient());
+              webView.loadUrl("https://reyanmusa.github.io/To-you/");
+            }
+            @Override public void onBackPressed() {
+              if (webView.canGoBack()) webView.goBack(); else super.onBackPressed();
+            }
+          }
+          EOF
+      - name: Build Amanah 1.0.2
+        run: gradle :app:assembleDebug --no-daemon
+      - name: Rename APK
+        run: cp app/build/outputs/apk/debug/app-debug.apk Amanah-1.0.2.apk
       - uses: actions/upload-artifact@v4
         with:
           name: Amanah-1.0.2
