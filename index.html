@@ -60,14 +60,13 @@ function isNetworkError(err){
 }
 async function flushOutbox(){
   if(!sb||!s.auth||navigator.onLine===false)return;
-  let q=readOutbox();if(!q.length)return;
-  const keep=[];
-  for(const item of q){
+  const q=readOutbox();if(!q.length)return;
+  for(let i=0;i<q.length;i++){
+    const item=q[i];
     try{
       let r;
-      if(item.op==='upsert'){
-        r=await sb.from(item.table).upsert(item.row,item.options||{});
-      }else if(item.op==='delete'){
+      if(item.op==='upsert')r=await sb.from(item.table).upsert(item.row,item.options||{});
+      else if(item.op==='delete'){
         let query=sb.from(item.table).delete();
         Object.entries(item.filters||{}).forEach(([k,v])=>{if(v!==undefined&&v!==null)query=query.eq(k,v)});
         r=await query;
@@ -77,23 +76,16 @@ async function flushOutbox(){
         r=await query;
       }
       if(r?.error){
-        if(isNetworkError(r.error)){keep.push(item);break}
-        // Permanent/RLS/data-shape errors should stay visible instead of looping forever.
+        if(isNetworkError(r.error)){writeOutbox(q.slice(i));return}
         toast('Offline sync error: '+r.error.message);
+        continue;
       }
     }catch(e){
-      if(isNetworkError(e)){keep.push(item);break}
+      if(isNetworkError(e)){writeOutbox(q.slice(i));return}
       toast('Offline sync error: '+(e?.message||e));
     }
   }
-  // Preserve anything we have not processed after the first transient failure.
-  const processed=q.length-keep.length;
-  if(processed>=0 && processed<q.length){
-    const remaining=q.slice(processed);
-    writeOutbox([...keep,...remaining]);
-  }else{
-    writeOutbox(keep);
-  }
+  writeOutbox([]);
 }
 function switchUserStorage(uid){
   if(!uid){KEY=BASE_KEY;return load()}
@@ -139,15 +131,20 @@ function streakRestoreCandidate(id){
   return {date:missed};
 }
 async function restoreStreak(id){
+  const habit=s.habits.find(x=>x.id===id);if(!habit)return;
   if(!sb||!s.auth)return toast('Sign in to use streak recovery');
   if(streakRestoresLeft()<=0)return toast('No restores left this month');
-  const candidate=streakRestoreCandidate(id);
-  if(!candidate)return toast('No recent broken streak to restore');
-  const restore=await sb.from('streak_restores').insert({user_id:s.profile.id,habit_id:id,restored_date:candidate.date}).select('id').single();
-  if(restore.error)return toast(restore.error.code==='23505'?'That missed day is already restored':'Restore failed: '+restore.error.message);
-  const complete=await sb.from('habit_completions').upsert({habit_id:id,owner_user_id:s.profile.id,completed_on:candidate.date},{onConflict:'habit_id,completed_on'});
-  if(complete.error){if(restore.data?.id)await sb.from('streak_restores').delete().eq('id',restore.data.id);return toast('Could not save the restored day: '+complete.error.message)}
-  const bag=s.habitCompletions[id]||{};bag[candidate.date]=true;s.habitCompletions[id]=bag;s.streakRestoresUsed=(s.streakRestoresUsed||0)+1;save();render();toast('🔥 Streak restored • '+streakRestoresLeft()+' left');
+  const candidate=streakRestoreCandidate(id);if(!candidate)return toast('No recent broken streak to restore');
+  const restoreId=crypto.randomUUID(),completeRow={habit_id:id,owner_user_id:s.profile.id,completed_on:candidate.date},restoreRow={id:restoreId,user_id:s.profile.id,habit_id:id,restored_date:candidate.date};
+  if(navigator.onLine===false){
+    enqueueOutbox({op:'upsert',table:'streak_restores',row:restoreRow,options:{onConflict:'id'}});
+    enqueueOutbox({op:'upsert',table:'habit_completions',row:completeRow,options:{onConflict:'habit_id,completed_on'}});
+    (s.habitCompletions[id]??={})[candidate.date]=true;s.streakRestoresUsed=(s.streakRestoresUsed||0)+1;save();render();toast('🔥 Streak restored offline · will sync ✓');return;
+  }
+  const restore=await sb.from('streak_restores').insert(restoreRow).select('id').single();
+  if(restore.error){if(isNetworkError(restore.error)){enqueueOutbox({op:'upsert',table:'streak_restores',row:restoreRow,options:{onConflict:'id'}});enqueueOutbox({op:'upsert',table:'habit_completions',row:completeRow,options:{onConflict:'habit_id,completed_on'}});(s.habitCompletions[id]??={})[candidate.date]=true;s.streakRestoresUsed=(s.streakRestoresUsed||0)+1;save();render();toast('🔥 Streak restored offline · will sync ✓');return}return toast(restore.error.code==='23505'?'That missed day is already restored':'Restore failed: '+restore.error.message)}
+  const complete=await cloudUpsert('habit_completions',completeRow,{onConflict:'habit_id,completed_on'});if(complete)return;
+  (s.habitCompletions[id]??={})[candidate.date]=true;s.streakRestoresUsed=(s.streakRestoresUsed||0)+1;save();render();toast('🔥 Streak restored • '+streakRestoresLeft()+' left');
 }
 function openStreak(id){
   const habit=s.habits.find(x=>x.id===id),n=streakFor(id),best=bestStreakFor(id),bag=s.habitCompletions[id]||{},restores=streakRestoresLeft(),candidate=streakRestoreCandidate(id);
@@ -160,7 +157,7 @@ function pct(){let all=s.habits.length+s.tasks.length,done=s.habits.filter(x=>do
 function openSheet(html){document.body.insertAdjacentHTML('beforeend',html)} function closeSheet(){document.querySelector('.modal')?.remove()}
 function modal(title,body){return `<div class="modal" onclick="if(event.target===this)closeSheet()"><div class="sheet"><div class="row"><h2 style="margin:0">${title}</h2><button class="icon" onclick="closeSheet()">×</button></div>${body}</div></div>`}
 function profile(){openSheet(modal('Your profile',`<div class="profileRow" style="display:flex;gap:12px;align-items:center;margin:18px 0">${avatar(s.profile.name,s.profile.avatar)}<div><strong>${esc(s.profile.name||'Your profile')}</strong><div class="muted">${esc(s.profile.email)}</div></div></div><div class="field"><label>Name</label><input id="pname" value="${esc(s.profile.name||'')}" placeholder="Your name"></div><div class="field"><label>Profile photo URL <span class="muted">(optional)</span></label><input id="pavatar" value="${esc(s.profile.avatar||'')}" placeholder="https://..."></div><button class="btn" style="width:100%" onclick="saveProfile()">Save profile</button>`))}
-async function saveProfile(){let n=document.getElementById('pname').value.trim();if(!n)return toast('Enter your name');const previousName=s.profile.name,previousAvatar=s.profile.avatar;s.profile.name=n;s.profile.avatar=document.getElementById('pavatar').value.trim();if(sb&&s.auth){let {error}=await sb.from('profiles').upsert({id:s.profile.id,display_name:n,avatar_url:s.profile.avatar||null,visual_mode:s.profile.visualMode||'classic',dark_mode:s.theme==='dark',notifications:!!s.settings.notifications,updated_at:new Date().toISOString()});if(error){s.profile.name=previousName;s.profile.avatar=previousAvatar;save();return toast(error.message)}}save();closeSheet();render();toast('Profile saved')}
+async function saveProfile(){let n=document.getElementById('pname').value.trim();if(!n)return toast('Enter your name');const previousName=s.profile.name,previousAvatar=s.profile.avatar;s.profile.name=n;s.profile.avatar=document.getElementById('pavatar').value.trim();const err=await cloudUpsert('profiles',{id:s.profile.id,display_name:n,avatar_url:s.profile.avatar||null,visual_mode:s.profile.visualMode||'classic',dark_mode:s.theme==='dark',notifications:!!s.settings.notifications,updated_at:new Date().toISOString()});if(err){s.profile.name=previousName;s.profile.avatar=previousAvatar;save();return}save();closeSheet();render();toast('Profile saved')}
 function authPage(){return `<main class="authPage"><div class="authLogo"><img src="./icon-v2.svg" alt="أمانة"></div><div class="authTag" dir="rtl">أمانة</div><section class="authCard"><div class="authSwitch"><button class="${!s.signup?'active':''}" onclick="s.signup=false;render()">Log in</button><button class="${s.signup?'active':''}" onclick="s.signup=true;render()">Create account</button></div><button class="googleBtn" onclick="googleLogin()"><span class="googleMark">G</span> Continue with Google</button><div class="or"><span>or</span></div><div class="field"><label>Email</label><input id="loginEmail" type="email" autocomplete="email" placeholder="you@example.com"></div><div class="field"><label>Password</label><input id="loginPass" type="password" autocomplete="current-password" placeholder="••••••••"></div><button class="btn" style="width:100%" onclick="emailAuth()">${s.signup?'Create account':'Log in'}</button><button class="btn secondary" style="width:100%;margin-top:8px" onclick="startDemo()">Try Demo</button><p class="muted tiny center">Your private data stays private. Demo data is separate from real accounts.</p></section></main>`}
 function login(){s.signup=false;s.auth=false;s.demo=false;save();render()}
 function startDemo(){s=clone(fresh);Object.assign(s,clone(demoSeed));s.demo=true;s.auth=false;s.profile={name:'Demo Me',email:'demo@toyou.app',avatar:'',provider:'demo',accent:'#718c73'};s.tour=true;save();render();toast('Demo mode started')}
@@ -498,7 +495,7 @@ async function deleteHabit(id){
       const q=await sb.from(table).delete().eq(column,id).eq(userColumn,s.profile.id);
       if(q.error)return toast('Could not delete habit data: '+q.error.message);
     }
-    const rh=await sb.from('habits').delete().eq('id',id).eq('user_id',s.profile.id);if(rh.error)return toast('Could not delete habit: '+rh.error.message);
+    const rh=await cloudDelete('habits',id,{user_id:s.profile.id});if(rh)return;
   }
   s.habits=s.habits.filter(x=>x.id!==id);delete s.habitCompletions[id];save();render();toast('Habit deleted');
 }
@@ -513,8 +510,8 @@ async function deleteTask(id){
   const item=s.tasks.find(x=>x.id===id);if(!item)return;
   if(!confirm('Delete this task and its completion history?'))return;
   if(sb&&s.auth){
-    const rc=await sb.from('task_completions').delete().eq('task_id',id).eq('owner_user_id',s.profile.id);if(rc.error)return toast('Could not delete task history: '+rc.error.message);
-    const rt=await sb.from('tasks').delete().eq('id',id).eq('user_id',s.profile.id);if(rt.error)return toast('Could not delete task: '+rt.error.message);
+    const rc=await cloudDelete('task_completions',null,{task_id:id,owner_user_id:s.profile.id});if(rc)return;
+    const rt=await cloudDelete('tasks',id,{user_id:s.profile.id});if(rt)return;
   }
   s.tasks=s.tasks.filter(x=>x.id!==id);delete s.taskCompletions[id];save();render();toast('Task deleted');
 }
@@ -843,10 +840,8 @@ function reset(){if(confirm('Reset all local demo data?')){s=clone(fresh);save()
 function exportData(){const blob=new Blob([JSON.stringify(s,null,2)],{type:'application/json'}),a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download='amanah-my-data.json';a.click();URL.revokeObjectURL(a.href)}
 async function finishOnboarding(){
   s.tour=true;save();render();
-  if(sb&&s.auth){
-    const {error}=await sb.from('profiles').update({tour_completed:true,updated_at:new Date().toISOString()}).eq('id',s.profile.id);
-    if(error)toast('Onboarding could not sync: '+error.message);
-  }
+  const err=await cloudUpsert('profiles',{id:s.profile.id,display_name:s.profile.name||'',avatar_url:s.profile.avatar||null,visual_mode:s.profile.visualMode||'classic',dark_mode:s.theme==='dark',notifications:!!s.settings.notifications,tour_completed:true,updated_at:new Date().toISOString()});
+  if(err)toast('Onboarding could not sync: '+err.message);
 }
 function onboarding(){return `<main class="page"><section class="card center" style="margin-top:20vh"><div class="brand">أمانة</div><p class="muted">Your space for growth, Deen, learning, and the future you’re building.</p><button class="btn" style="width:100%" onclick="finishOnboarding()">Get started</button><button class="btn ghost" style="width:100%;margin-top:8px" onclick="login()">I already have an account</button></section></main>`}
 function syncLabel(){return navigator.onLine===false?'Offline':'Synced'}
@@ -896,8 +891,10 @@ async function hydrateQuranUs(){
 }
 async function ensureQuranDaily(date=todayKey()){
   if(!sb||!s.auth||!s.connected||!s.partner?.coupleId)return false;
-  const row={id:crypto.randomUUID(),couple_id:s.partner.coupleId,quran_date:date,target_pages:3},r=await sb.from('quran_muraajaah_daily').upsert(row,{onConflict:'couple_id,quran_date'});
-  if(r.error){toast('Could not create Qur’an target: '+r.error.message);return false}
+  const row={id:crypto.randomUUID(),couple_id:s.partner.coupleId,quran_date:date,target_pages:3};
+  if(navigator.onLine===false){enqueueOutbox({op:'upsert',table:'quran_muraajaah_daily',row,options:{onConflict:'couple_id,quran_date'}});if(date===todayKey())s.quranUsDaily=row;save();return true}
+  const r=await sb.from('quran_muraajaah_daily').upsert(row,{onConflict:'couple_id,quran_date'});
+  if(r.error){if(isNetworkError(r.error)){enqueueOutbox({op:'upsert',table:'quran_muraajaah_daily',row,options:{onConflict:'couple_id,quran_date'}});if(date===todayKey())s.quranUsDaily=row;save();return true}toast('Could not create Qur’an target: '+r.error.message);return false}
   if(date===todayKey())s.quranUsDaily=Object.assign({target_pages:3},s.quranUsDaily||{},row,{couple_id:s.partner.coupleId,quran_date:date,target_pages:3});
   return true;
 }
@@ -936,13 +933,27 @@ async function toggleQuranMuraajaah(){
   if(!sb||!s.auth)return toast('Sign in to use shared Qur’an');
   if(!s.connected||!s.partner?.coupleId)return toast('Connect first');
   if(!await ensureQuranDaily())return;
-  const date=todayKey(),coupleId=s.partner.coupleId,current=await sb.from('quran_muraajaah_progress').select('*').eq('couple_id',coupleId).eq('quran_date',date).eq('user_id',s.profile.id).maybeSingle();
-  if(current.error)return toast('Could not read your Qur’an progress: '+current.error.message);
+  const date=todayKey(),coupleId=s.partner.coupleId;
+  const local=(s.quranUsProgress||[]).find(x=>x.user_id===s.profile.id&&x.quran_date===date);
+  if(navigator.onLine===false){
+    const done=local?.pages_completed===3,now=new Date().toISOString(),row={couple_id:coupleId,quran_date:date,user_id:s.profile.id,pages_completed:done?0:3,completed_at:done?null:now,updated_at:now};
+    s.quranUsProgress=[...(s.quranUsProgress||[]).filter(x=>!(x.user_id===s.profile.id&&x.quran_date===date)),...(row.pages_completed===3?[row]:[])];
+    enqueueOutbox({op:'upsert',table:'quran_muraajaah_progress',row,options:{onConflict:'couple_id,quran_date,user_id'}});
+    save();render();toast(row.pages_completed===3?'3 pages completed offline · will sync ✓':'Marked incomplete offline · will sync');return;
+  }
+  const current=await sb.from('quran_muraajaah_progress').select('*').eq('couple_id',coupleId).eq('quran_date',date).eq('user_id',s.profile.id).maybeSingle();
+  if(current.error){if(isNetworkError(current.error))return toggleQuranMuraajaahOffline(date,coupleId,local);return toast('Could not read your Qur’an progress: '+current.error.message)}
   const done=current.data?.pages_completed===3,now=new Date().toISOString(),row={couple_id:coupleId,quran_date:date,user_id:s.profile.id,pages_completed:done?0:3,completed_at:done?null:now,updated_at:now};
-  const result=current.data?await sb.from('quran_muraajaah_progress').update({pages_completed:row.pages_completed,completed_at:row.completed_at,updated_at:row.updated_at}).eq('couple_id',coupleId).eq('quran_date',date).eq('user_id',s.profile.id):await sb.from('quran_muraajaah_progress').insert(row);
-  if(result.error)return toast('Could not save Qur’an progress: '+result.error.message);
+  const result=await cloudUpsert('quran_muraajaah_progress',row,{onConflict:'couple_id,quran_date,user_id'});
+  if(result)return;
   s.quranUsProgress=[...(s.quranUsProgress||[]).filter(x=>!(x.user_id===s.profile.id&&x.quran_date===date)),...(row.pages_completed===3?[row]:[])];
   save();render();toast(row.pages_completed===3?'3 pages completed ✓':'Marked incomplete');
+}
+async function toggleQuranMuraajaahOffline(date,coupleId,local){
+  const done=local?.pages_completed===3,now=new Date().toISOString(),row={couple_id:coupleId,quran_date:date,user_id:s.profile.id,pages_completed:done?0:3,completed_at:done?null:now,updated_at:now};
+  s.quranUsProgress=[...(s.quranUsProgress||[]).filter(x=>!(x.user_id===s.profile.id&&x.quran_date===date)),...(row.pages_completed===3?[row]:[])];
+  enqueueOutbox({op:'upsert',table:'quran_muraajaah_progress',row,options:{onConflict:'couple_id,quran_date,user_id'}});
+  save();render();toast(row.pages_completed===3?'3 pages completed offline · will sync ✓':'Marked incomplete offline · will sync');
 }
 function openQuranStreak(userId){
   const mine=userId===s.profile.id,name=mine?(s.profile.name||'You'):(s.partner?.name||'Her'),current=quranStreakFor(userId),best=quranBestStreakFor(userId),candidate=mine?quranRestoreCandidate():null,left=quranStreakRestoresLeft();
@@ -966,13 +977,13 @@ async function saveMeaningfulAyahEdit(id){
   const a=(s.quranUsAyahs||[]).find(x=>x.id===id);if(!a||a.created_by!==s.profile.id)return;
   const surah=document.getElementById('editAyahSurah')?.value.trim()||'',ayah=+(document.getElementById('editAyahNumber')?.value||0),arabic=document.getElementById('editAyahArabic')?.value.trim()||'',translation=document.getElementById('editAyahTranslation')?.value.trim()||'',note=document.getElementById('editAyahNote')?.value.trim()||'';
   if(!surah||!ayah||!arabic||!translation)return toast('Add the reference, Arabic and translation');
-  const r=await sb.from('quran_ayah_notes').update({surah,ayah,arabic,translation,note,updated_at:new Date().toISOString()}).eq('id',id).eq('created_by',s.profile.id);if(r.error)return toast('Could not update ayah: '+r.error.message);
+  const err=await cloudUpdate('quran_ayah_notes',{surah,ayah,arabic,translation,note,updated_at:new Date().toISOString()},{id,created_by:s.profile.id});if(err)return;
   Object.assign(a,{surah,ayah,arabic,translation,note});save();closeSheet();render();toast('Ayah updated ✓');
 }
 async function deleteMeaningfulAyah(id){
   const a=(s.quranUsAyahs||[]).find(x=>x.id===id);if(!a||a.created_by!==s.profile.id)return;
   closeSheet();if(!confirm('Delete this meaningful ayah?'))return;
-  const r=await sb.from('quran_ayah_notes').delete().eq('id',id).eq('created_by',s.profile.id);if(r.error)return toast('Could not delete ayah: '+r.error.message);
+  const r=await cloudDelete('quran_ayah_notes',id,{created_by:s.profile.id});if(r)return;
   s.quranUsAyahs=s.quranUsAyahs.filter(x=>x.id!==id);save();render();toast('Ayah deleted');
 }
 function quranUsAyahCountPlaceholder(){
@@ -986,7 +997,7 @@ function addMeaningfulAyah(){
 async function saveMeaningfulAyah(){
   const surah=document.getElementById('ayahSurah')?.value.trim()||'',ayah=+(document.getElementById('ayahNumber')?.value||0),arabic=document.getElementById('ayahArabic')?.value.trim()||'',translation=document.getElementById('ayahTranslation')?.value.trim()||'',note=document.getElementById('ayahNote')?.value.trim()||'';
   if(!surah||!ayah||!arabic||!translation)return toast('Add the reference, Arabic and translation');
-  const id=crypto.randomUUID(),row={id,couple_id:s.partner.coupleId,created_by:s.profile.id,surah,ayah,arabic,translation,note},r=await sb.from('quran_ayah_notes').insert(row);if(r.error)return toast('Could not save ayah: '+r.error.message);
+  const id=crypto.randomUUID(),row={id,couple_id:s.partner.coupleId,created_by:s.profile.id,surah,ayah,arabic,translation,note},err=await cloudUpsert('quran_ayah_notes',row,{onConflict:'id'});if(err)return;
   s.quranUsAyahs=[row,...(s.quranUsAyahs||[])];save();closeSheet();render();toast('Ayah saved for Us');
 }
 function quranTogether(){
@@ -1209,7 +1220,7 @@ async function sendSuggestion(){
 }
 async function setSuggestionStatus(id,status){
   const x=(s.suggestions||[]).find(v=>v.id===id);if(!x||x.recipientId!==s.profile.id)return;
-  if(!sb||!s.auth)return toast('Sign in first');const result=await sb.from('relationship_suggestions').update({status,updated_at:new Date().toISOString()}).eq('id',x.id).eq('recipient_id',s.profile.id);if(result.error){toast('Could not update suggestion: '+result.error.message);return}
+  if(!sb||!s.auth)return toast('Sign in first');const err=await cloudUpdate('relationship_suggestions',{status,updated_at:new Date().toISOString()},{id:x.id,recipient_id:s.profile.id});if(err)return
   x.status=status;save();closeSheet();openSuggestions();toast(status==='done'?'Suggestion marked useful ✓':'Suggestion parked');
 }
 async function deleteSuggestion(id){
@@ -1356,4 +1367,16 @@ render();
 setTimeout(()=>{if(!authReady){authReady=true;render()}hideSplash()},6500);
 initAuth();
 if('serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js').catch(()=>{});
-</script></body></html>
+</script></body></htmlasync function cloudUpdate(table,values,filters={}){
+  if(!sb||!s.auth)return null;
+  if(navigator.onLine===false){enqueueOutbox({op:'update',table,values,filters});return null}
+  let q=sb.from(table).update(values);
+  Object.entries(filters||{}).forEach(([k,v])=>{if(v!==undefined&&v!==null)q=q.eq(k,v)});
+  const r=await q;
+  if(r.error){
+    if(isNetworkError(r.error)){enqueueOutbox({op:'update',table,values,filters});return null}
+    toast('Sync error: '+r.error.message);
+  }
+  return r.error||null;
+}
+>
