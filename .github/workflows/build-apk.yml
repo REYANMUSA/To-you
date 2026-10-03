@@ -1,4 +1,4 @@
-name: Build Amanah APK 1.0.2
+name: Build Amanah APK 1.0.3
 on:
   workflow_dispatch:
   push:
@@ -22,7 +22,10 @@ jobs:
       - name: Create Android wrapper
         shell: bash
         run: |
-          mkdir -p app/src/main/java/com/amanah/app app/src/main/res/values
+          mkdir -p app/src/main/java/com/amanah/app app/src/main/res/values app/src/main/res/drawable
+          sudo apt-get update
+          sudo apt-get install -y librsvg2-bin
+          rsvg-convert -w 512 -h 512 icon-v2.svg -o app/src/main/res/drawable/amanah_icon.png
           cat > settings.gradle <<'EOF'
           pluginManagement { repositories { google(); mavenCentral(); gradlePluginPortal() } }
           dependencyResolutionManagement { repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS); repositories { google(); mavenCentral() } }
@@ -41,8 +44,8 @@ jobs:
               applicationId 'com.amanah.app'
               minSdk 23
               targetSdk 35
-              versionCode 102
-              versionName '1.0.2'
+              versionCode 103
+              versionName '1.0.3'
             }
           }
           EOF
@@ -57,10 +60,21 @@ jobs:
             </style>
           </resources>
           EOF
+          cat > app/src/main/res/values/strings.xml <<'EOF'
+          <resources>
+            <string name="app_name">أمانة</string>
+          </resources>
+          EOF
           cat > app/src/main/AndroidManifest.xml <<'EOF'
           <manifest xmlns:android="http://schemas.android.com/apk/res/android">
             <uses-permission android:name="android.permission.INTERNET"/>
-            <application android:theme="@style/AppTheme" android:label="Amanah" android:hardwareAccelerated="true">
+            <application
+              android:theme="@style/AppTheme"
+              android:label="@string/app_name"
+              android:icon="@drawable/amanah_icon"
+              android:roundIcon="@drawable/amanah_icon"
+              android:hardwareAccelerated="true"
+              android:supportsRtl="true">
               <activity android:name=".MainActivity" android:screenOrientation="portrait" android:exported="true">
                 <intent-filter>
                   <action android:name="android.intent.action.MAIN"/>
@@ -72,37 +86,132 @@ jobs:
           EOF
           cat > app/src/main/java/com/amanah/app/MainActivity.java <<'EOF'
           package com.amanah.app;
+
           import android.app.Activity;
+          import android.graphics.Color;
+          import android.graphics.Typeface;
+          import android.os.Build;
           import android.os.Bundle;
+          import android.view.Gravity;
+          import android.view.View;
+          import android.view.ViewGroup;
           import android.webkit.WebChromeClient;
           import android.webkit.WebSettings;
           import android.webkit.WebView;
           import android.webkit.WebViewClient;
+          import android.widget.FrameLayout;
+          import android.widget.ImageView;
+          import android.widget.LinearLayout;
+          import android.widget.TextView;
+
           public class MainActivity extends Activity {
             private WebView webView;
-            @Override public void onCreate(Bundle savedInstanceState) {
+            private View nativeSplash;
+            private boolean splashHidden=false;
+
+            @Override public void onCreate(Bundle savedInstanceState){
               super.onCreate(savedInstanceState);
-              webView = new WebView(this);
-              setContentView(webView);
-              WebSettings s = webView.getSettings();
-              s.setJavaScriptEnabled(true);
-              s.setDomStorageEnabled(true);
-              s.setDatabaseEnabled(true);
-              s.setMediaPlaybackRequiresUserGesture(false);
-              webView.setWebViewClient(new WebViewClient());
+              applySystemBars();
+              final FrameLayout root=new FrameLayout(this);
+              webView=new WebView(this);
+              webView.setBackgroundColor(Color.rgb(247,247,244));
+              root.addView(webView,new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT,ViewGroup.LayoutParams.MATCH_PARENT));
+              nativeSplash=buildSplash();
+              root.addView(nativeSplash,new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT,ViewGroup.LayoutParams.MATCH_PARENT));
+              setContentView(root);
+
+              WebSettings settings=webView.getSettings();
+              settings.setJavaScriptEnabled(true);
+              settings.setDomStorageEnabled(true);
+              settings.setDatabaseEnabled(true);
+              settings.setMediaPlaybackRequiresUserGesture(false);
+              settings.setLoadsImagesAutomatically(true);
+              settings.setSupportZoom(false);
+
+              webView.setVisibility(View.INVISIBLE);
+              webView.setWebViewClient(new WebViewClient(){
+                @Override public void onPageFinished(WebView view,String url){
+                  view.setVisibility(View.VISIBLE);
+                  view.setAlpha(0f);
+                  view.animate().alpha(1f).setDuration(180).start();
+                  hideNativeSplash();
+                }
+              });
               webView.setWebChromeClient(new WebChromeClient());
               webView.loadUrl("https://reyanmusa.github.io/To-you/");
+
+              nativeSplash.postDelayed(new Runnable(){
+                @Override public void run(){
+                  if(webView.getVisibility()!=View.VISIBLE) webView.setVisibility(View.VISIBLE);
+                  hideNativeSplash();
+                }
+              },2600);
             }
-            @Override public void onBackPressed() {
-              if (webView.canGoBack()) webView.goBack(); else super.onBackPressed();
+
+            private void applySystemBars(){
+              int bg=Color.rgb(247,247,244);
+              getWindow().setStatusBarColor(bg);
+              getWindow().setNavigationBarColor(bg);
+              if(Build.VERSION.SDK_INT>=Build.VERSION_CODES.M){
+                int flags=View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR;
+                if(Build.VERSION.SDK_INT>=Build.VERSION_CODES.O) flags|=View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR;
+                getWindow().getDecorView().setSystemUiVisibility(flags);
+              }
+            }
+
+            private int dp(int value){return Math.round(value*getResources().getDisplayMetrics().density);}
+
+            private View buildSplash(){
+              FrameLayout overlay=new FrameLayout(this);
+              overlay.setBackgroundColor(Color.rgb(247,247,244));
+              LinearLayout box=new LinearLayout(this);
+              box.setOrientation(LinearLayout.VERTICAL);
+              box.setGravity(Gravity.CENTER_HORIZONTAL);
+
+              ImageView logo=new ImageView(this);
+              logo.setImageResource(R.drawable.amanah_icon);
+              logo.setScaleType(ImageView.ScaleType.CENTER_INSIDE);
+              box.addView(logo,new LinearLayout.LayoutParams(dp(142),dp(142)));
+
+              TextView name=new TextView(this);
+              name.setText("أمانة");
+              if(Build.VERSION.SDK_INT>=Build.VERSION_CODES.JELLY_BEAN_MR1) name.setTextDirection(View.TEXT_DIRECTION_RTL);
+              name.setGravity(Gravity.CENTER);
+              name.setTextColor(Color.rgb(48,54,48));
+              name.setTextSize(28);
+              name.setTypeface(Typeface.DEFAULT,Typeface.BOLD);
+              LinearLayout.LayoutParams nameLp=new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT,ViewGroup.LayoutParams.WRAP_CONTENT);
+              nameLp.topMargin=dp(14);
+              box.addView(name,nameLp);
+
+              FrameLayout.LayoutParams boxLp=new FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT,ViewGroup.LayoutParams.WRAP_CONTENT,Gravity.CENTER);
+              overlay.addView(box,boxLp);
+              box.setAlpha(0f); box.setScaleX(.92f); box.setScaleY(.92f);
+              box.animate().alpha(1f).scaleX(1f).scaleY(1f).setDuration(650).start();
+              return overlay;
+            }
+
+            private void hideNativeSplash(){
+              if(splashHidden||nativeSplash==null)return;
+              splashHidden=true;
+              try{
+                webView.evaluateJavascript("(function(){var e=document.getElementById('splash');if(e)e.classList.add('hide');})()",null);
+              }catch(Throwable ignored){}
+              nativeSplash.animate().alpha(0f).scaleX(1.02f).scaleY(1.02f).setDuration(280).withEndAction(new Runnable(){
+                @Override public void run(){nativeSplash.setVisibility(View.GONE);}
+              }).start();
+            }
+
+            @Override public void onBackPressed(){
+              if(webView.canGoBack()) webView.goBack(); else super.onBackPressed();
             }
           }
           EOF
       - name: Build Amanah 1.0.2
         run: gradle :app:assembleDebug --no-daemon
       - name: Rename APK
-        run: cp app/build/outputs/apk/debug/app-debug.apk Amanah-1.0.2.apk
+        run: cp app/build/outputs/apk/debug/app-debug.apk Amanah-1.0.3.apk
       - uses: actions/upload-artifact@v4
         with:
-          name: Amanah-1.0.2
-          path: Amanah-1.0.2.apk
+          name: Amanah-1.0.3
+          path: Amanah-1.0.3.apk
