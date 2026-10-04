@@ -1,4 +1,5 @@
 <!-- Amanah 1.0.3 Android branding + optional Glass theme -->
+<!-- Journey actions fixed in 1.0.4 -->
 <!doctype html>
 <html lang="en">
 <head>
@@ -688,16 +689,32 @@ function journey(){go('journey')}
 async function deleteJourneyEvent(id){
   const item=s.journey.find(x=>x.id===id);if(!item)return;
   if(!confirm('Delete this journey memory?'))return;
-  const err=await cloudDelete('journey_events',id);if(err)return;
-  try{await sb.from('journey_media').delete().eq('journey_event_id',id)}catch{}
-  s.journey=s.journey.filter(x=>x.id!==id);save();render();toast('Journey memory deleted');
+  if(!sb||!s.auth)return toast('Please sign in first');
+  const r=await sb.from('journey_events').delete().eq('id',id).select('id');
+  if(r.error)return toast('Could not delete this memory: '+r.error.message);
+  if(!r.data?.length)return toast('This memory could not be deleted. It may no longer exist or you may not have access.');
+  try{
+    const media=await sb.from('journey_media').delete().eq('journey_event_id',id);
+    if(media.error)toast('Memory deleted, but its photo record could not be removed.');
+  }catch{}
+  s.journey=s.journey.filter(x=>x.id!==id);save();closeSheet();render();toast('Journey memory deleted ✓');
 }
 async function saveJourneyEdit(id){
   const j=s.journey.find(x=>x.id===id);if(!j)return;
-  const title=document.getElementById('editJTitle')?.value.trim()||'',date=document.getElementById('editJDate')?.value||todayKey(),type=document.getElementById('editJType')?.value||'past',desc=document.getElementById('editJDesc')?.value.trim()||'';
+  const title=document.getElementById('editJTitle')?.value.trim()||'',
+    date=document.getElementById('editJDate')?.value||todayKey(),
+    type=document.getElementById('editJType')?.value||'past',
+    desc=document.getElementById('editJDesc')?.value.trim()||'';
   if(!title)return toast('Add a title');
-  const err=await cloudUpsert('journey_events',{id,owner_user_id:j.ownerUserId||s.profile.id,created_by:j.createdBy||s.profile.id,couple_id:s.partner?.coupleId||null,title,event_date:date,time_position:type,description:desc});if(err)return;
-  Object.assign(j,{title,date,type,desc});save();closeSheet();render();toast('Journey memory updated ✓');
+  if(!sb||!s.auth)return toast('Please sign in first');
+  const r=await sb.from('journey_events')
+    .update({title,event_date:date,time_position:type,description:desc})
+    .eq('id',id)
+    .select('id');
+  if(r.error)return toast('Could not save this memory: '+r.error.message);
+  if(!r.data?.length)return toast('This memory could not be updated. It may no longer exist or you may not have access.');
+  Object.assign(j,{title,date,type,desc});
+  save();closeSheet();render();toast('Journey memory updated ✓');
 }
 let journeyHoldTimer=null,journeyHoldTriggered=false;
 function startJourneyHold(e,id){
@@ -708,7 +725,7 @@ function clearJourneyHold(){if(journeyHoldTimer){clearTimeout(journeyHoldTimer);
 function toggleJourneyCard(e,id){e.preventDefault();e.stopPropagation();if(journeyHoldTriggered){journeyHoldTriggered=false;return}editJourneyEvent(id)}
 function openJourneyActions(id){
   clearJourneyHold();const j=s.journey.find(x=>x.id===id);if(!j)return;
-  openSheet(modal('Journey memory','<div class="muted" style="margin-bottom:14px">'+esc(j.title)+'</div><button class="btn" style="width:100%" onclick="editJourneyEvent(\''+id+'\')">Edit</button><button class="btn danger" style="width:100%;margin-top:8px" onclick="deleteJourneyEvent(\''+id+'\');closeSheet()">Delete</button><button class="btn ghost" style="width:100%;margin-top:8px" onclick="closeSheet()">Cancel</button>'));
+  openSheet(modal('Journey memory','<div class="muted" style="margin-bottom:14px">'+esc(j.title)+'</div><button class="btn" style="width:100%" onclick="editJourneyEvent(\''+id+'\')">Edit</button><button class="btn danger" style="width:100%;margin-top:8px" onclick="deleteJourneyEvent(\''+id+'\')">Delete</button><button class="btn ghost" style="width:100%;margin-top:8px" onclick="closeSheet()">Cancel</button>'));
 }
 function editJourneyEvent(id){
   const j=s.journey.find(x=>x.id===id);if(!j)return;
@@ -1643,7 +1660,7 @@ function journeyPage(){
   const milestones=[...(s.journeyMilestones||[])].sort((a,b)=>milestoneNextDate(a.date,a.repeatYearly)-milestoneNextDate(b.date,b.repeatYearly));
   const events=[...(s.journey||[])].sort((a,b)=>a.date.localeCompare(b.date));
   const chips=milestones.length?milestones.map(m=>'<button class="milestoneChip" onpointerdown="startMilestoneHold(event,\''+m.id+'\')" onpointerup="clearMilestoneHold()" onpointerleave="clearMilestoneHold()" onpointercancel="clearMilestoneHold()"><span class="milestoneCircle">'+esc(m.icon)+'</span><span><strong>'+esc(milestoneLabel(m))+'</strong><small>'+esc(m.date)+'</small></span></button>').join(''):'<div class="empty">No remembered dates yet.</div>';
-  const eventCards=events.length?events.map(j=>'<section class="card" onpointerdown="startJourneyHold(event,\''+j.id+'\')" onpointerup="clearJourneyHold()" onpointerleave="clearJourneyHold()" onpointercancel="clearJourneyHold()"><div class="row"><span class="pill">'+esc(j.type)+'</span><span class="muted">'+esc(j.date)+'</span></div><h3>'+esc(j.title)+'</h3><div class="muted">'+esc(j.desc)+'</div>'+(j.photo?'<img class="journeyPhoto" src="'+esc(j.photo)+'" alt="Journey photo">':'')+'<div class="muted small center pressHint">Long press for Edit · Delete · Cancel</div></section>').join(''):'<section class="card empty">No memories yet. Add the moments you want to keep.</section>';
+  const eventCards=events.length?events.map(j=>'<section class="card"><div class="row"><span class="pill">'+esc(j.type)+'</span><span class="muted">'+esc(j.date)+'</span></div><h3>'+esc(j.title)+'</h3><div class="muted">'+esc(j.desc)+'</div>'+(j.photo?'<img class="journeyPhoto" src="'+esc(j.photo)+'" alt="Journey photo">':'')+'<div class="grid2" style="margin-top:12px"><button class="btn secondary" onclick="editJourneyEvent(\''+j.id+'\')">Edit</button><button class="btn danger" onclick="deleteJourneyEvent(\''+j.id+'\')">Delete</button></div></section>').join(''):'<section class="card empty">No memories yet. Add the moments you want to keep.</section>';
   return '<main class="page"><button class="back" onclick="go(\'us\')">‹ Us</button><div class="row"><div><h1>Our Journey</h1><div class="muted">Memories, milestones, and the dates worth remembering.</div></div><button class="btn secondary" onclick="addJourney()">+ Memory</button></div><section class="card"><div class="row"><div><strong>Remembered dates</strong><div class="muted">Small circles for birthdays, the day you met, and other dates you want to keep.</div></div><button class="btn secondary" onclick="addMilestone()">+ Date</button></div><div class="milestoneList" style="margin-top:12px">'+chips+'</div></section><div class="pill">Past · Present · Future</div>'+eventCards+'</main>';
 }
 function notes(){return '<main class="page"><div class="row"><h1>Notes</h1><button class="btn secondary" onclick="addNote()">+ New</button></div>'+(s.notes.length?s.notes.map(n=>'<section class="card"><div class="row"><strong>'+esc(n.title)+'</strong><button class="icon" title="Delete note" onclick="deleteNote(\''+n.id+'\')">×</button></div><p class="muted">'+esc(n.body)+'</p></section>').join(''):'<div class="empty">Private notes live here.</div>')+'</main>'}
