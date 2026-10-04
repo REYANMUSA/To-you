@@ -6,9 +6,10 @@ create table if not exists public.profiles (
   id uuid primary key references auth.users(id) on delete cascade,
   display_name text not null default '',
   avatar_url text,
-  visual_mode text not null default 'classic' check (visual_mode in ('classic','girl','ocean')),
+  visual_mode text not null default 'classic' check (visual_mode in ('classic','girl','ocean','glass')),
   created_at timestamptz not null default now(),
-  updated_at timestamptz not null default now()
+  updated_at timestamptz not null default now(),
+  reminder_voice text not null default 'him' check (reminder_voice in ('him','her'))
 );
 
 create table if not exists public.connections (
